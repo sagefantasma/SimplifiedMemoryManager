@@ -2,7 +2,34 @@
 
   <PropertyGroup>
     <TargetFramework>netstandard2.0</TargetFramework>
+    <GeneratePackageOnBuild>False</GeneratePackageOnBuild>
+    <Title>Simplified Memory Manager</Title>
+    <Authors>andynaro</Authors>
+    <Description>A C# library that simplifies and streamlines memory management and modification of processes.</Description>
+    <PackageProjectUrl>https://github.com/sagefantasma/SimplifiedMemoryManager</PackageProjectUrl>
+    <PackageIcon>sagefantasma.png</PackageIcon>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <RepositoryUrl>https://github.com/sagefantasma/SimplifiedMemoryManager.git</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageTags>cheatengine;memory;manager;process;proxy</PackageTags>
+    <PackageLicenseFile>LICENSE</PackageLicenseFile>
+    <PackageId>SimplifiedMemoryManager</PackageId>
   </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="..\LICENSE">
+      <Pack>True</Pack>
+      <PackagePath>\</PackagePath>
+    </None>
+    <None Include="..\README.md">
+      <Pack>True</Pack>
+      <PackagePath>\</PackagePath>
+    </None>
+    <None Include="..\sagefantasma.png">
+      <Pack>True</Pack>
+      <PackagePath>\</PackagePath>
+    </None>
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.CSharp" Version="4.7.0" />
