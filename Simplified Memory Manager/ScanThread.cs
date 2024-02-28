@@ -16,7 +16,7 @@ namespace Simplified_Memory_Manager
         {
             for(int index = 0; index < Data.Length; index++)
             {
-                if (Data[index])
+                // if (Data[index])
             }
         }
     }
