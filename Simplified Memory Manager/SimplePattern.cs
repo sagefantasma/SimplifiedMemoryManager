@@ -5,7 +5,7 @@ using System.Text.RegularExpressions;
 
 namespace Simplified_Memory_Manager
 {
-    enum Operation
+    public enum Operation
     {
         SkipOne,
         SkipIndefinitely,
@@ -14,119 +14,96 @@ namespace Simplified_Memory_Manager
         Exact
     }
 
-    abstract class PatternExpression
+    public abstract class PatternExpression
     {
-        Operation operation {get; set;}
-        byte[] operand {get;set;}
+        public Operation Operation {get; set;}
+        public byte? Operand {get;set;}
 
-        public PatternExpression(Operation operation, byte[] operand)
+        public PatternExpression(Operation operation, byte? operand)
         {
-            this.operation = operation;
-            this.operand = operand;
+            this.Operation = operation;
+            this.Operand = operand;
         }
     }
 
-    class AnyInGroup : PatternExpression
+    public class AnyInGroup : PatternExpression
     {
         // TODO: implement logic
-        private AnyInGroup(Operation operation, byte[] operand) : base(operation, operand){}
+        private AnyInGroup(Operation operation, byte operand) : base(operation, operand){}
 
-        public AnyInGroup(byte[] operand) : this(Operation.AnyInGroup, operand){}
+        /*
+        public AnyInGroup(byte operand) : this(Operation.AnyInGroup, operand){}
+        */
     }
-    class AnyNotInGroup : PatternExpression
+    public class AnyNotInGroup : PatternExpression
     {
         //TODO: implement logic
-        private AnyNotInGroup(Operation operation, byte[] operand) : base(operation, operand){}
+        private AnyNotInGroup(Operation operation, byte operand) : base(operation, operand){}
 
+        /*
         public AnyNotInGroup(byte[] operand) : this(Operation.AnyNotInGroup, operand){}
+        */
     }
-    class SkipIndefinitely : PatternExpression
+    public class SkipIndefinitely : PatternExpression
     {   
         //TODO: implement logic
-        private SkipIndefinitely(Operation operation, byte[] operand) : base(operation, operand)
+        private SkipIndefinitely(Operation operation) : base(operation, null)
         {
         }
+        /*
         public SkipIndefinitely() : this(Operation.SkipIndefinitely, null) { }
+        */
     }
-    class SkipOne : PatternExpression
+    public class SkipOne : PatternExpression
     {
-        private SkipOne(Operation operation, byte[] operand) : base(operation, operand){}
+        private SkipOne(Operation operation) : base(operation, null){}
 
-        public SkipOne() : this(Operation.SkipOne, null){}
+        public SkipOne() : this(Operation.SkipOne){}
     }
-    class Exact : PatternExpression
+    public class Exact : PatternExpression
     {
-        private Exact(Operation operation, byte[] operand) : base(operation, operand){}
+        private Exact(Operation operation, byte operand) : base(operation, operand){}
 
-        public Exact(byte[] operand) : this(Operation.Exact, operand){}
+        public Exact(byte operand) : this(Operation.Exact, operand){}
     }
     
 
     public class SimplePattern
     {
-        List<PatternExpression> ParsedPattern {get;set;}
+        public List<PatternExpression> ParsedPattern {get;set;}
+
+        private List<PatternExpression> ParsePattern(string[] patternElements)
+        {
+            List<PatternExpression> patternExpressions = new List<PatternExpression>();
+
+            foreach(string patternElement in patternElements)
+            {
+                // TODO: improve
+                //as of now, we are only supporting exact match and skip 1,
+                //so this is just a simple/hacky solution to get to MVP.
+                
+                string sanitizedElement = patternElement.Trim();
+                if(int.TryParse(sanitizedElement, out int operand))
+                {
+                    //Exact parse.
+                    patternExpressions.Add(new Exact(byte.Parse(sanitizedElement)));
+                }
+                else
+                {
+                    //Skip one.
+                    patternExpressions.Add(new SkipOne());
+                }
+            }
+
+            return patternExpressions;
+        }
 
         public SimplePattern(string patternInput) //TODO: is this the best way to input a scanning ParsedPattern?
         {
             patternInput = patternInput.TrimStart(); //sanitizing the input a bit
-            ParsedPattern = new List<PatternExpression>();
-            //maybe it makes more sense to trim start, then create substrings based on space?
             string[] patternElements = patternInput.Split(' ');
 
-            PatternExpression lastExpression = null;
-            foreach(string patternElement in patternElements)
-            {
-                string sanitizedElement = patternElement.Trim();
-                if(int.TryParse(sanitizedElement, out int operand))
-                {
-                    if(lastExpression?.GetType() != typeof(SkipOne))
-                    {
-                        //Exact parse.
-                    }
-                }
-            }
-
-            for(int i = 0; i < patternInput.Length; i += 2)
-            {
-                char first = patternInput[i];
-                char second = patternInput[i + 1];
-                switch (first)
-                {
-                    case '%':
-                    case '*':
-                        throw new NotImplementedException("Infinite skip until next declared byte not yet supported");
-                        //skip infinitely until next declared byte is found
-                        ParsedPattern.Add(new SkipIndefinitely());
-                        break;
-                    case '_':
-                    case '?':
-                        //skip next byte
-                        ParsedPattern.Add(new SkipOne());
-                        break;
-                    case '[':
-                        throw new NotImplementedException("Limited choice byte selection not yet supported");
-                        //byte can be any within the list until ]
-                        if(patternInput[i+1] == '!')
-                        {
-                            //! denotes the byte can be any BUT those in the list until ]
-                        }
-                        break;
-                    case ']':
-                        throw new NotImplementedException("Limited choice byte selection not yet supported");
-                        //end the byte grouping
-                        break;
-                    default:
-                        if(patternInput[i+2] != ' ')
-                        {
-                            throw new Exception("Invalid pattern format!");
-                        }
-                        if(!new [] {'%', '*', '_', '?', '[', ']', '!'}.Any(x=> x == second))
-                        {
-                            //good value, we can use it for comparison
-                        }
-                        break;
-                }
-            }
+            ParsedPattern = ParsePattern(patternElements);
         }
     }
 }
