@@ -83,10 +83,10 @@ namespace Simplified_Memory_Manager
                 //so this is just a simple/hacky solution to get to MVP.
                 
                 string sanitizedElement = patternElement.Trim();
-                if(int.TryParse(sanitizedElement, out int operand))
+                if(byte.TryParse(sanitizedElement, System.Globalization.NumberStyles.AllowHexSpecifier, null, out byte operand))
                 {
                     //Exact parse.
-                    patternExpressions.Add(new Exact(byte.Parse(sanitizedElement)));
+                    patternExpressions.Add(new Exact(operand));
                 }
                 else
                 {
