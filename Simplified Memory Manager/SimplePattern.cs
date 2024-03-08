@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Text.RegularExpressions;
 
@@ -72,6 +73,16 @@ namespace Simplified_Memory_Manager
     {
         public List<PatternExpression> ParsedPattern {get;set;}
 
+        public static byte SimpleParse(string inputString)
+        {
+            return byte.Parse(inputString, System.Globalization.NumberStyles.AllowHexSpecifier);
+        }
+
+        public static bool TrySimpleParse(string inputString, out byte output)
+        {
+            return byte.TryParse(inputString, System.Globalization.NumberStyles.AllowHexSpecifier, null, out output);
+        }
+
         private List<PatternExpression> ParsePattern(string[] patternElements)
         {
             List<PatternExpression> patternExpressions = new List<PatternExpression>();
@@ -83,7 +94,7 @@ namespace Simplified_Memory_Manager
                 //so this is just a simple/hacky solution to get to MVP.
                 
                 string sanitizedElement = patternElement.Trim();
-                if(byte.TryParse(sanitizedElement, System.Globalization.NumberStyles.AllowHexSpecifier, null, out byte operand))
+                if(TrySimpleParse(sanitizedElement, out byte operand))
                 {
                     //Exact parse.
                     patternExpressions.Add(new Exact(operand));
