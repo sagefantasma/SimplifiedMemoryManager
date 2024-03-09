@@ -71,10 +71,16 @@ namespace Simplified_Memory_Manager
 
     public class SimplePattern
     {
+        private static List<char> OperatorList = new List<char>
+        {
+            '!', '[', ']', '?', '%', '*'
+        };
         public List<PatternExpression> ParsedPattern {get;set;}
 
-        public static byte SimpleParse(string inputString)
+        public static byte? SimpleParse(string inputString)
         {
+            if(inputString.Any(character => OperatorList.Contains(character)))
+                return null;
             return byte.Parse(inputString, System.Globalization.NumberStyles.AllowHexSpecifier);
         }
 

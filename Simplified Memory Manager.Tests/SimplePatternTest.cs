@@ -2,40 +2,45 @@ namespace Simplified_Memory_Manager.Tests;
 
 public class SimplePatternTest
 {
-    public class TestData
+    public class InputDataTestList : TheoryData<byte?, string>
     {
-        public byte? ExpectedOperand;
-        public string ActualOperand;
-
-        public TestData(byte? expected, string actualResult)
+        public InputDataTestList()
         {
-            ExpectedOperand = expected;
-            ActualOperand = actualResult;
-        }
+            Add(0x5A, "5A");
+            Add((byte) 0x12, "12");
+            Add(null, "??");
+            Add(0x03, "03");
+            Add(null, "?");
+            Add(0x02, "2");
+        } //TODO: add more cases
     }
-    //"55 12 ?? 03 ?? 2"
-    public static List<TestData> InputDataTestList =
-    new List<TestData>
+
+    [Theory]
+    [ClassData(typeof(InputDataTestList))]
+    public void ParseStringToByte(byte? expectedOutput, string input)
     {
-        new TestData(0x5A, "5A"),
-        new TestData((byte) 0x12, "12"),
-        new TestData(null, "??"),
-        new TestData(0x03, "03"),
-        new TestData(null, "?"),
-        new TestData(0x03, "2")
-    }; //TODO: use this(add more cases) and Theory
-       //instead of Facts going forward to cut down on duplication
+        byte? actualOutput = SimplePattern.SimpleParse(input);
 
-    [Fact]
-    public void CreateExact()
+        Assert.Equal(expectedOutput, actualOutput);
+    }
+
+    [Theory]
+    [ClassData(typeof(InputDataTestList))]
+    public void CreateExact(byte? expectedOutput, string input)
     {
-        Operation expectedOperation = Operation.Exact;
-        byte? expectedOperand = InputDataTestList[0].ExpectedOperand;
+        Exact actualResult;
 
-        Exact actualResult = new Exact(byte.Parse(InputDataTestList[0].ActualOperand, System.Globalization.NumberStyles.AllowHexSpecifier));
+        if(SimplePattern.TrySimpleParse(input, out byte parsedByte))
+        {    
+            actualResult = new Exact(parsedByte);
 
-        Assert.Equal(expectedOperation, actualResult.Operation);
-        Assert.Equal(expectedOperand, actualResult.Operand);
+            Assert.Equal(Operation.Exact, actualResult.Operation);
+            Assert.Equal(expectedOutput, actualResult.Operand);
+        }
+        else
+        {
+            Assert.Null(SimplePattern.SimpleParse(input));
+        }
     }
 
     [Fact]
