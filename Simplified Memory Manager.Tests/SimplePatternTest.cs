@@ -13,7 +13,7 @@ public class SimplePatternTest
 
 	[Theory]
 	[ClassData(typeof(InputDataTestList))]
-	public void CreateExact(byte? expectedOutput, string input)
+	public void CreateExactSetsExpectedOperation(byte? expectedOutput, string input)
 	{
 		Exact actualResult;
 
@@ -22,7 +22,6 @@ public class SimplePatternTest
 			actualResult = new Exact(parsedByte);
 
 			Assert.Equal(Operation.Exact, actualResult.Operation);
-			Assert.Equal(expectedOutput, actualResult.Operand);
 		}
 		else
 		{
@@ -30,16 +29,41 @@ public class SimplePatternTest
 		}
 	}
 
-	[Fact]
-	public void CreateSkipOne()
+	[Theory]
+	[ClassData(typeof(InputDataTestList))]
+	public void CreateExactSetsExpectedOperand(byte? expectedOutput, string input)
+	{
+        Exact actualResult;
+
+        if (SimplePattern.TrySimpleParse(input, out byte parsedByte))
+        {
+            actualResult = new Exact(parsedByte);
+
+            Assert.Equal(expectedOutput, actualResult.Operand);
+        }
+        else
+        {
+            Assert.Null(SimplePattern.SimpleParse(input));
+        }
+    }
+
+    [Fact]
+	public void CreateSkipOneSetsCorrectOperation()
 	{
 		Operation expectedOperation = Operation.SkipOne;
 
 		SkipOne actualResult = new SkipOne();
 
 		Assert.Equal(expectedOperation, actualResult.Operation);
-		Assert.Null(actualResult.Operand);
 	}
+
+	[Fact]
+	public void CreateSkipOneSetsCorrectOperand()
+	{
+		SkipOne actualResult = new SkipOne();
+
+        Assert.Null(actualResult.Operand);
+    }
 
 	[Theory]
 	[ClassData(typeof(InputDataTestPattern))]
