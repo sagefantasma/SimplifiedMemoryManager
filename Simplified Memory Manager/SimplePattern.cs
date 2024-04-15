@@ -5,7 +5,7 @@ using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
 
-namespace Simplified_Memory_Manager
+namespace SimplifiedMemoryManager
 {
 	public enum Operation
 	{

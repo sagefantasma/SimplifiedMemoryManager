@@ -2,37 +2,33 @@
 using System.Collections.Generic;
 using System.Reflection;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace Simplified_Memory_Manager
+namespace SimplifiedMemoryManager
 {
-	public delegate void PatternMatchedEventHandler(object sender, int index);
 
-	internal class ScanThread
+	public class ScanThread
 	{
 		public byte[] Data { get; set; }
 		public CancellationToken Token { get; private set; }
 		public SimplePattern Pattern { get; private set; }
-		PatternMatchedEventHandler PatternMatched {get;set;}
+		EventHandler<MatchFoundEventArgs> PatternMatched {get;set;}
 		
-		public ScanThread(SimplePattern pattern, CancellationToken token, PatternMatchedEventHandler patternMatched)
+		public ScanThread(SimplePattern pattern, CancellationToken token, EventHandler<MatchFoundEventArgs> patternMatched)
 		{
 			Pattern = pattern;
 			Token = token;
-			PatternMatched = patternMatched;
-			PatternWasMatched += patternMatched;
+			PatternMatched += patternMatched;
 		}
 		
-		public event PatternMatchedEventHandler PatternWasMatched
+		public class MatchFoundEventArgs : EventArgs
 		{
-			add
+			public int Index { get; set; }
+			public MatchFoundEventArgs(int index)
 			{
-				PatternWasMatched += value;
-			}
-			remove
-			{
-				PatternWasMatched += value;
+				Index = index;
 			}
 		}
 
@@ -58,7 +54,7 @@ namespace Simplified_Memory_Manager
 						{
 							//perfect match
 							foundPosition = dataIndex;
-							PatternMatched(this, dataIndex);
+							PatternMatched?.Invoke(this, new MatchFoundEventArgs(foundPosition));
 						}
 						else
 						{

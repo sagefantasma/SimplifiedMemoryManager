@@ -1,2 +1,3 @@
 global using Xunit;
-global using Simplified_Memory_Manager;
+global using SimplifiedMemoryManager;
+global using System.Text;

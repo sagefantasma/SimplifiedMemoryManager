@@ -1,4 +1,4 @@
-namespace Simplified_Memory_Manager.Tests;
+namespace SimplifiedMemoryManager.Tests;
 
 public class SimplePatternTest
 {

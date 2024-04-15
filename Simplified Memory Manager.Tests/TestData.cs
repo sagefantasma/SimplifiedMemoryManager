@@ -1,4 +1,4 @@
-namespace Simplified_Memory_Manager.Tests;
+namespace SimplifiedMemoryManager.Tests;
 
 public class InputDataTestList : TheoryData<byte?, string>
 {
@@ -18,5 +18,14 @@ public class InputDataTestPattern : TheoryData<string, string>
 	public InputDataTestPattern()
 	{
 		Add("5A 12 ?? 03 ?? 02", "5A 12 ? 03 ?? 2");
+	}
+}
+
+public class ScanThreadTestData : TheoryData<int, string>
+{
+	public ScanThreadTestData()
+	{
+		//(indexOfDesiredPattern, desiredPatternToFind)
+		Add(1234, "5A 12 03 02 7E");
 	}
 }

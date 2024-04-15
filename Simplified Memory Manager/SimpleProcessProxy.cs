@@ -1,4 +1,4 @@
-﻿using Simplified_Memory_Manager;
+﻿using SimplifiedMemoryManager;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -21,7 +21,7 @@ namespace SimplifiedMemoryManager
 		private static string ProcessName { get; set; }
 		private static IntPtr ProcessBaseAddress { get; set; }
 		private static IntPtr OpenedProcessHandle { get; set; }
-		private static CancellationTokenSource MasterCancellationTokenSource {get;set;}
+		private static CancellationTokenSource MasterCancellationTokenSource {get;set;} = new CancellationTokenSource();
 
 		public SimpleProcessProxy(Process process)
 		{
@@ -509,7 +509,7 @@ namespace SimplifiedMemoryManager
 			return result;
 		}
 
-		internal static void PatternMatched(object sender, int index)
+		public static void PatternMatched(object sender, ScanThread.MatchFoundEventArgs index)
 		{
 			//TODO: confirm. i think my theory is good, but i definitely could be wrong here.
 			MasterCancellationTokenSource.Cancel();
