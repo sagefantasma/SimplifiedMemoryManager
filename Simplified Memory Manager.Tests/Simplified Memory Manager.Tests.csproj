@@ -24,7 +24,13 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="./../Simplified Memory Manager/Simplified Memory Manager.csproj"/>
+    <ProjectReference Include="./../Simplified Memory Manager/Simplified Memory Manager.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="TestingData\sampleMemory.mem">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
   </ItemGroup>
 
 </Project>

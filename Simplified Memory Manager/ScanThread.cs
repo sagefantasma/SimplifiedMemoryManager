@@ -12,9 +12,10 @@ namespace SimplifiedMemoryManager
 	public class ScanThread
 	{
 		public byte[] Data { get; set; }
-		public CancellationToken Token { get; private set; }
-		public SimplePattern Pattern { get; private set; }
-		EventHandler<MatchFoundEventArgs> PatternMatched {get;set;}
+		private CancellationToken Token { get; set; }
+		private SimplePattern Pattern { get; set; }
+		public EventHandler<MatchFoundEventArgs> PatternMatched { get; private set;}
+		public bool ThreadRequestedCancellation { get; set; } = false;
 		
 		public ScanThread(SimplePattern pattern, CancellationToken token, EventHandler<MatchFoundEventArgs> patternMatched)
 		{
@@ -38,28 +39,32 @@ namespace SimplifiedMemoryManager
 			{
 				for(int patternIndex = 0; patternIndex < Pattern.ParsedPattern.Count; patternIndex++)
 				{
-					PatternExpression currentExpression = Pattern.ParsedPattern[patternIndex];
-					if(currentExpression.Operation == Operation.SkipOne)
+					if (!Token.IsCancellationRequested)
 					{
-						continue;
-					}
-					else if(currentExpression.Operation == Operation.Exact)
-					{
-						if(currentExpression.Operand != Data[dataIndex + patternIndex])
+						PatternExpression currentExpression = Pattern.ParsedPattern[patternIndex];
+						if (currentExpression.Operation == Operation.SkipOne)
 						{
-							//not a match, this slice is no good
-							break;
-						}
-						else if(patternIndex == Pattern.ParsedPattern.Count - 1 )
-						{
-							//perfect match
-							foundPosition = dataIndex;
-							PatternMatched?.Invoke(this, new MatchFoundEventArgs(foundPosition));
-						}
-						else
-						{
-							//looking good so far, but not a perfect match yet
 							continue;
+						}
+						else if (currentExpression.Operation == Operation.Exact)
+						{
+							if (currentExpression.Operand != Data[dataIndex + patternIndex])
+							{
+								//not a match, this slice is no good
+								break;
+							}
+							else if (patternIndex == Pattern.ParsedPattern.Count - 1)
+							{
+								//perfect match
+								foundPosition = dataIndex;
+								PatternMatched?.Invoke(this, new MatchFoundEventArgs(foundPosition));
+								return;
+							}
+							else
+							{
+								//looking good so far, but not a perfect match yet
+								continue;
+							}
 						}
 					}
 				}

@@ -194,18 +194,38 @@ namespace SimplifiedMemoryManager
 
 			return bytesToRead;
 		}
-		#endregion
 
-		#region Public methods
-		/// <summary>
-		/// Opens the proxied process, gets the current value of the designated offset, and attempts to invert its state.
-		/// 
-		/// If the attempt to invert the boolean fails, an exception is thrown.
-		/// </summary>
-		/// <param name="memoryOffset">The offset, from index 0 of the proxied process' memory, that holds the boolean you want to invert.</param>
-		/// <param name="booleanSize">If your process stores booleans with more than 1 byte, specify the byte-size here.</param>
-		/// <exception cref="SimpleProcessProxyException"></exception>
-		public void InvertBooleanValue(int memoryOffset, int booleanSize = 1, bool forceWritability = false)
+        private static int ScanningResult(ref int foundPosition, List<Thread> runningThreads)
+        {
+            while (runningThreads.Any(thread => thread.IsAlive))
+            {
+
+            }
+
+            if (foundPosition == -1)
+            {
+                return -1;
+            }
+
+            return foundPosition;
+        }
+
+        private static void PatternMatched(object sender, ScanThread.MatchFoundEventArgs index)
+        {
+            MasterCancellationTokenSource.Cancel();
+        }
+        #endregion
+
+        #region Public methods
+        /// <summary>
+        /// Opens the proxied process, gets the current value of the designated offset, and attempts to invert its state.
+        /// 
+        /// If the attempt to invert the boolean fails, an exception is thrown.
+        /// </summary>
+        /// <param name="memoryOffset">The offset, from index 0 of the proxied process' memory, that holds the boolean you want to invert.</param>
+        /// <param name="booleanSize">If your process stores booleans with more than 1 byte, specify the byte-size here.</param>
+        /// <exception cref="SimpleProcessProxyException"></exception>
+        public void InvertBooleanValue(int memoryOffset, int booleanSize = 1, bool forceWritability = false)
 		{
 			byte[] currentValue = GetMemory(memoryOffset, booleanSize);
 
@@ -452,10 +472,8 @@ namespace SimplifiedMemoryManager
 			}
 		}
 
-		public List<IntPtr> ScanMemoryForPattern(SimplePattern pattern, byte[] memoryToScan = null)
+		public int ScanMemoryForPattern(SimplePattern pattern, byte[] memoryToScan = null)
 		{
-			//TODO: confirm. i think my theory is good, but i definitely could be wrong here.
-			//throw new NotImplementedException("This feature has not been finished yet, sorry.");
 			List<IntPtr> results = new List<IntPtr>();
 
 			if(memoryToScan == null)
@@ -476,45 +494,23 @@ namespace SimplifiedMemoryManager
 				ScanThread scanThread = new ScanThread(pattern, MasterCancellationTokenSource.Token, PatternMatched);
 
 				int realBufferSize = Math.Min((int)bufferSizePerThread, memoryToScan.Length - bufferPosition);
-				Array.Copy(memoryToScan, bufferPosition, scanThread.Data, 0, realBufferSize);
+				scanThread.Data = new byte[realBufferSize + 1];
+                Array.Copy(memoryToScan, bufferPosition, scanThread.Data, 0, realBufferSize);
 				scanThreads.Add(scanThread);
 
 				bufferPosition += realBufferSize;
 			}
 
 			int foundPosition = -1;
-			foreach(ScanThread scanningThread in scanThreads)
+			List<Thread> runningThreads = new List<Thread>();
+			foreach(ScanThread scanThread in scanThreads)
 			{
-				scanningThread.ScanForPattern(ref foundPosition);
+				Thread scanningThread = new Thread(() => scanThread.ScanForPattern(ref foundPosition));
+				scanningThread.Start();
+				runningThreads.Add(scanningThread);
 			}
-			return ScanningResult(ref foundPosition, memoryToScan, pattern.ParsedPattern.Count);
+			return ScanningResult(ref foundPosition, runningThreads);
 		}
-		
-		private static List<IntPtr> ScanningResult(ref int foundPosition, byte[] memoryToScan, int patternLength)
-		{
-			//TODO: confirm. i think my theory is good, but i definitely could be wrong here.
-			while(!MasterCancellationTokenSource.IsCancellationRequested)
-			{
-				
-			}
-			
-			if(foundPosition == -1)
-			{
-				return null;
-			}
-			
-			List<IntPtr> result = new List<IntPtr>();
-			Array.Copy(memoryToScan, foundPosition, result.ToArray(), 0, patternLength);
-			
-			return result;
-		}
-
-		public static void PatternMatched(object sender, ScanThread.MatchFoundEventArgs index)
-		{
-			//TODO: confirm. i think my theory is good, but i definitely could be wrong here.
-			MasterCancellationTokenSource.Cancel();
-		}
-
 		#endregion
 	}
 }

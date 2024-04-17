@@ -3,7 +3,7 @@ namespace SimplifiedMemoryManager.Tests;
 public class SimplePatternTest
 {
 	[Theory]
-	[ClassData(typeof(InputDataTestList))]
+	[ClassData(typeof(InputDataTestOperatorList))]
 	public void ParseStringToByte(byte? expectedOutput, string input)
 	{
 		byte? actualOutput = SimplePattern.SimpleParse(input);
@@ -12,8 +12,8 @@ public class SimplePatternTest
 	}
 
 	[Theory]
-	[ClassData(typeof(InputDataTestList))]
-	public void CreateExactSetsExpectedOperation(byte? expectedOutput, string input)
+	[ClassData(typeof(InputDataTestOperandList))]
+	public void CreateExactSetsExpectedOperation(Operation expectedOutput, string input)
 	{
 		Exact actualResult;
 
@@ -21,7 +21,7 @@ public class SimplePatternTest
 		{    
 			actualResult = new Exact(parsedByte);
 
-			Assert.Equal(Operation.Exact, actualResult.Operation);
+			Assert.Equal(expectedOutput, actualResult.Operation);
 		}
 		else
 		{
@@ -30,7 +30,7 @@ public class SimplePatternTest
 	}
 
 	[Theory]
-	[ClassData(typeof(InputDataTestList))]
+	[ClassData(typeof(InputDataTestOperatorList))]
 	public void CreateExactSetsExpectedOperand(byte? expectedOutput, string input)
 	{
         Exact actualResult;
