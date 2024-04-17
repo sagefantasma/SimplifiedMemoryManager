@@ -75,7 +75,7 @@ public class ProxyTestDataTypes : TheoryData<object>
 		Add((float)21);
 		Add(true);
 		Add('a');
-		Add((byte)0x1D);
+		Add(new byte[] { 0x1D, 0xFF });
 		Add("banana");
 	}
 }
