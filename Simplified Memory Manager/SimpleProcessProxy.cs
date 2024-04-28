@@ -231,7 +231,6 @@ namespace SimplifiedMemoryManager
 
 			byte[] valueToWrite = new byte[booleanSize];
 
-			//TODO: validate this
 			if (Enumerable.SequenceEqual(currentValue, BitConverter.GetBytes(true)))
 			{
 				BitConverter.GetBytes(false).CopyTo(valueToWrite, 0);
@@ -240,7 +239,6 @@ namespace SimplifiedMemoryManager
 			{
 				BitConverter.GetBytes(true).CopyTo(valueToWrite, 0);
 			}
-			//= currentValue == BitConverter.GetBytes((short)0xFF) ? BitConverter.GetBytes((short)0xFF) : BitConverter.GetBytes((short)1);
 
 			try
 			{
@@ -432,18 +430,18 @@ namespace SimplifiedMemoryManager
 				throw new SimpleProcessProxyException($"Failed to write int value at {OpenedProcessHandle}+{memoryOffset}", e);
 			}
 		}
-		#endregion
+        #endregion
 
-		/// <summary>
-		/// Returns the bytes found at the provided offset within the proxied process.
+        /// <summary>
+		/// Reads the proxied process' memory at the given offset for the supplied quantity of bytes.
 		/// 
-		/// If the attempt to read memory fails, an exception is thrown.
-		/// </summary>
-		/// <param name="memoryOffset">Where in the proxied process' memory to begin reading from.</param>
-		/// <param name="bytesToRead">Amount of bytes to read in and return.</param>
-		/// <returns></returns>
-		/// <exception cref="SimpleProcessProxyException"></exception>
-		public byte[] ReadProcessOffset(int memoryOffset, long bytesToRead)
+        /// If the attempt to read memory fails, an exception is thrown.
+        /// </summary>
+        /// <param name="memoryOffset">Where in the proxied process' memory to begin reading from.</param>
+        /// <param name="bytesToRead">Amount of bytes to read in and return.</param>
+        /// <returns>The bytes found at the provided offset within the proxied process.</returns>
+        /// <exception cref="SimpleProcessProxyException"></exception>
+        public byte[] ReadProcessOffset(int memoryOffset, long bytesToRead)
 		{
 			try
 			{
@@ -456,7 +454,7 @@ namespace SimplifiedMemoryManager
 		}
 
 		/// <summary>
-		/// Returns a byte array representing the entirety of the proxied process' memory.
+		/// Takes a snapshot of the proxied process' memory at the current moment in time.
 		/// </summary>
 		/// <returns>Array of bytes containing the proxied process' current memory.</returns>
 		/// <exception cref="SimpleProcessProxyException"></exception>
@@ -472,6 +470,16 @@ namespace SimplifiedMemoryManager
 			}
 		}
 
+		/// <summary>
+		/// Kicks off a series of tasks(one for each logical processor available on your machine)
+		/// to begin asynchronously scanning memory for a hexadecimal pattern(also known as an
+		/// array of bytes).
+		/// </summary>
+		/// <param name="pattern">The SimplePattern representation of an AoB to scan for</param>
+		/// <param name="memoryToScan">Optional - provide this to scan this specific array of memory.
+		/// If this is not provided, this method will automatically scan the memory
+		/// of the process associated with the SimpleProcessProxy.</param>
+		/// <returns>The index of the starting position of the provided pattern, or -1 if not found.</returns>
 		public int ScanMemoryForPattern(SimplePattern pattern, byte[] memoryToScan = null)
 		{
 			List<IntPtr> results = new List<IntPtr>();
@@ -494,7 +502,7 @@ namespace SimplifiedMemoryManager
 				ScanThread scanThread = new ScanThread(pattern, MasterCancellationTokenSource.Token, PatternMatched);
 
 				int realBufferSize = Math.Min((int)bufferSizePerThread, memoryToScan.Length - bufferPosition);
-				scanThread.Data = new byte[realBufferSize + 1];
+				scanThread.Data = new byte[realBufferSize];
 				Array.Copy(memoryToScan, bufferPosition, scanThread.Data, 0, realBufferSize);
 				scanThreads.Add(scanThread);
 
