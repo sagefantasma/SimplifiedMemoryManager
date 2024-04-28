@@ -195,37 +195,37 @@ namespace SimplifiedMemoryManager
 			return bytesToRead;
 		}
 
-        private static int ScanningResult(ref int foundPosition, List<Thread> runningThreads)
-        {
-            while (runningThreads.Any(thread => thread.IsAlive))
-            {
+		private static int ScanningResult(ref int foundPosition, List<Task> runningThreads)
+		{
+			while (runningThreads.Any(thread => thread.Status == TaskStatus.Running))
+			{
 
-            }
+			}
 
-            if (foundPosition == -1)
-            {
-                return -1;
-            }
+			if (foundPosition == -1)
+			{
+				return -1;
+			}
 
-            return foundPosition;
-        }
+			return foundPosition;
+		}
 
-        private static void PatternMatched(object sender, ScanThread.MatchFoundEventArgs index)
-        {
-            MasterCancellationTokenSource.Cancel();
-        }
-        #endregion
+		private static void PatternMatched(object sender, ScanThread.MatchFoundEventArgs index)
+		{
+			MasterCancellationTokenSource.Cancel();
+		}
+		#endregion
 
-        #region Public methods
-        /// <summary>
-        /// Opens the proxied process, gets the current value of the designated offset, and attempts to invert its state.
-        /// 
-        /// If the attempt to invert the boolean fails, an exception is thrown.
-        /// </summary>
-        /// <param name="memoryOffset">The offset, from index 0 of the proxied process' memory, that holds the boolean you want to invert.</param>
-        /// <param name="booleanSize">If your process stores booleans with more than 1 byte, specify the byte-size here.</param>
-        /// <exception cref="SimpleProcessProxyException"></exception>
-        public void InvertBooleanValue(int memoryOffset, int booleanSize = 1, bool forceWritability = false)
+		#region Public methods
+		/// <summary>
+		/// Opens the proxied process, gets the current value of the designated offset, and attempts to invert its state.
+		/// 
+		/// If the attempt to invert the boolean fails, an exception is thrown.
+		/// </summary>
+		/// <param name="memoryOffset">The offset, from index 0 of the proxied process' memory, that holds the boolean you want to invert.</param>
+		/// <param name="booleanSize">If your process stores booleans with more than 1 byte, specify the byte-size here.</param>
+		/// <exception cref="SimpleProcessProxyException"></exception>
+		public void InvertBooleanValue(int memoryOffset, int booleanSize = 1, bool forceWritability = false)
 		{
 			byte[] currentValue = GetMemory(memoryOffset, booleanSize);
 
@@ -495,19 +495,19 @@ namespace SimplifiedMemoryManager
 
 				int realBufferSize = Math.Min((int)bufferSizePerThread, memoryToScan.Length - bufferPosition);
 				scanThread.Data = new byte[realBufferSize + 1];
-                Array.Copy(memoryToScan, bufferPosition, scanThread.Data, 0, realBufferSize);
+				Array.Copy(memoryToScan, bufferPosition, scanThread.Data, 0, realBufferSize);
 				scanThreads.Add(scanThread);
 
 				bufferPosition += realBufferSize;
 			}
 
 			int foundPosition = -1;
-			List<Thread> runningThreads = new List<Thread>();
+			List<Task> runningThreads = new List<Task>();
 			foreach(ScanThread scanThread in scanThreads)
 			{
-				Thread scanningThread = new Thread(() => scanThread.ScanForPattern(ref foundPosition));
-				scanningThread.Start();
-				runningThreads.Add(scanningThread);
+				Task scanningTask = Task.Factory.StartNew(() => scanThread.ScanForPattern(ref foundPosition));
+				scanningTask.Start();
+				runningThreads.Add(scanningTask);
 			}
 			return ScanningResult(ref foundPosition, runningThreads);
 		}

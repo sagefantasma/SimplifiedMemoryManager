@@ -35,39 +35,46 @@ namespace SimplifiedMemoryManager
 
 		public void ScanForPattern(ref int foundPosition)
 		{
-			for(int dataIndex = 0; dataIndex < Data.Length; dataIndex++)
+			try
 			{
-				for(int patternIndex = 0; patternIndex < Pattern.ParsedPattern.Count; patternIndex++)
+				for(int dataIndex = 0; dataIndex < Data.Length; dataIndex++)
 				{
-					if (!Token.IsCancellationRequested)
+					for(int patternIndex = 0; patternIndex < Pattern.ParsedPattern.Count; patternIndex++)
 					{
-						PatternExpression currentExpression = Pattern.ParsedPattern[patternIndex];
-						if (currentExpression.Operation == Operation.SkipOne)
+						if (!Token.IsCancellationRequested)
 						{
-							continue;
-						}
-						else if (currentExpression.Operation == Operation.Exact)
-						{
-							if (currentExpression.Operand != Data[dataIndex + patternIndex])
+							PatternExpression currentExpression = Pattern.ParsedPattern[patternIndex];
+							if (currentExpression.Operation == Operation.SkipOne)
 							{
-								//not a match, this slice is no good
-								break;
-							}
-							else if (patternIndex == Pattern.ParsedPattern.Count - 1)
-							{
-								//perfect match
-								foundPosition = dataIndex;
-								PatternMatched?.Invoke(this, new MatchFoundEventArgs(foundPosition));
-								return;
-							}
-							else
-							{
-								//looking good so far, but not a perfect match yet
 								continue;
+							}
+							else if (currentExpression.Operation == Operation.Exact)
+							{
+								if (currentExpression.Operand != Data[dataIndex + patternIndex])
+								{
+									//not a match, this slice is no good
+									break;
+								}
+								else if (patternIndex == Pattern.ParsedPattern.Count - 1)
+								{
+									//perfect match
+									foundPosition = dataIndex;
+									PatternMatched?.Invoke(this, new MatchFoundEventArgs(foundPosition));
+									return;
+								}
+								else
+								{
+									//looking good so far, but not a perfect match yet
+									continue;
+								}
 							}
 						}
 					}
 				}
+			}
+			catch(Exception e)
+			{
+				//TODO: report this error up to the spawning class
 			}
 		}
 	}
