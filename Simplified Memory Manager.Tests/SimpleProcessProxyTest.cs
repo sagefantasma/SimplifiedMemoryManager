@@ -79,6 +79,7 @@ public class SimpleProcessProxyTest : IDisposable
 
             //Act
             _testProcess.Kill();
+            _testProcess.WaitForExit();
             void readFromDeadProcess()
             {
                 data = simpleProcessProxy.GetProcessSnapshot();

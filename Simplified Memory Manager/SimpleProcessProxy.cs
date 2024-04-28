@@ -506,7 +506,6 @@ namespace SimplifiedMemoryManager
 			foreach(ScanThread scanThread in scanThreads)
 			{
 				Task scanningTask = Task.Factory.StartNew(() => scanThread.ScanForPattern(ref foundPosition));
-				scanningTask.Start();
 				runningThreads.Add(scanningTask);
 			}
 			return ScanningResult(ref foundPosition, runningThreads);
