@@ -60,7 +60,6 @@ namespace SimplifiedMemoryManager
 									//perfect match
 									foundPosition = dataIndex;
 									PatternMatched?.Invoke(this, new MatchFoundEventArgs(foundPosition));
-									return;
 								}
 								else
 								{

@@ -21,7 +21,7 @@ namespace SimplifiedMemoryManager
 		private static string ProcessName { get; set; }
 		private static IntPtr ProcessBaseAddress { get; set; }
 		private static IntPtr OpenedProcessHandle { get; set; }
-		private static CancellationTokenSource MasterCancellationTokenSource {get;set;} = new CancellationTokenSource();
+		private static SPPCancellationTokenSource MasterCancellationTokenSource {get;set;} = new SPPCancellationTokenSource();
 
 		public SimpleProcessProxy(Process process)
 		{
@@ -430,18 +430,18 @@ namespace SimplifiedMemoryManager
 				throw new SimpleProcessProxyException($"Failed to write int value at {OpenedProcessHandle}+{memoryOffset}", e);
 			}
 		}
-        #endregion
+		#endregion
 
-        /// <summary>
+		/// <summary>
 		/// Reads the proxied process' memory at the given offset for the supplied quantity of bytes.
 		/// 
-        /// If the attempt to read memory fails, an exception is thrown.
-        /// </summary>
-        /// <param name="memoryOffset">Where in the proxied process' memory to begin reading from.</param>
-        /// <param name="bytesToRead">Amount of bytes to read in and return.</param>
-        /// <returns>The bytes found at the provided offset within the proxied process.</returns>
-        /// <exception cref="SimpleProcessProxyException"></exception>
-        public byte[] ReadProcessOffset(int memoryOffset, long bytesToRead)
+		/// If the attempt to read memory fails, an exception is thrown.
+		/// </summary>
+		/// <param name="memoryOffset">Where in the proxied process' memory to begin reading from.</param>
+		/// <param name="bytesToRead">Amount of bytes to read in and return.</param>
+		/// <returns>The bytes found at the provided offset within the proxied process.</returns>
+		/// <exception cref="SimpleProcessProxyException"></exception>
+		public byte[] ReadProcessOffset(int memoryOffset, long bytesToRead)
 		{
 			try
 			{
@@ -479,9 +479,14 @@ namespace SimplifiedMemoryManager
 		/// <param name="memoryToScan">Optional - provide this to scan this specific array of memory.
 		/// If this is not provided, this method will automatically scan the memory
 		/// of the process associated with the SimpleProcessProxy.</param>
+		/// <param name="quantityToFind">Optional - provide an integer to provide a specific quantity
+		/// of matches in memory. To find all matches in memory, enter -1.</param>
 		/// <returns>The index of the starting position of the provided pattern, or -1 if not found.</returns>
-		public int ScanMemoryForPattern(SimplePattern pattern, byte[] memoryToScan = null)
+		public int ScanMemoryForPattern(SimplePattern pattern, byte[] memoryToScan = null, int quantityToFind = 1)
 		{
+			if(quantityToFind == 0)
+				throw new SimpleProcessProxyException("Invalid quantity to find. Provide a positive integer, or -1 to find all matches.");
+			MasterCancellationTokenSource = new SPPCancellationTokenSource(quantityToFind);
 			List<IntPtr> results = new List<IntPtr>();
 
 			if(memoryToScan == null)
