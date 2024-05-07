@@ -22,6 +22,9 @@ namespace SimplifiedMemoryManager
         // and with bytes
         [DllImport("kernel32.dll")]
         public static extern bool ReadProcessMemory(IntPtr hProcess, IntPtr lpBaseAddress, byte[] lpBuffer, uint nSize, out int lpNumberOfBytesRead);
+        // and long bytes
+        [DllImport("kernel32.dll")]
+        public static extern bool ReadProcessMemory(IntPtr hProcess, IntPtr lpBaseAddress, byte[] lpBuffer, long nSize, out long lpNumberOfBytesRead);
 
         // Declare CloseHandle
         [DllImport("kernel32.dll", SetLastError = true)]

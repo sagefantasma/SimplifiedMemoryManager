@@ -14,7 +14,7 @@ namespace SimplifiedMemoryManager
 	{
 		#region Internals
 		private const int AllAccess = 0x1F0FFF;
-		private const int PageReadWrite = 0x40;
+		private const int ExecuteReadWrite = 0x40;
 		private bool disposedValue;
 
 		public static Process ProcessToProxy { get; set; }
@@ -88,7 +88,8 @@ namespace SimplifiedMemoryManager
 			{
 				OpenProcess();
 				NativeMethods.ReadProcessMemory(OpenedProcessHandle, ProcessBaseAddress, buffer, (uint)buffer.Length, out int numBytesRead);
-			}
+              //NativeMethods.ReadProcessMemory(OpenedProcessHandle, objectAddress, bytesToRead, (uint)bytesToRead.Length, out int bytesRead);
+            }
 			catch (Exception e)
 			{
 				throw new SimpleProcessProxyException($"Failed to read process `{ProcessName}`. Is it running?", e);
@@ -180,7 +181,7 @@ namespace SimplifiedMemoryManager
 
 		private void ForceReadWritePermissions(IntPtr objectAddress, int byteCount)
 		{
-			bool modificationSuccess = NativeMethods.VirtualProtectEx(OpenedProcessHandle, objectAddress, byteCount, PageReadWrite, out _);
+			bool modificationSuccess = NativeMethods.VirtualProtectEx(OpenedProcessHandle, objectAddress, byteCount, ExecuteReadWrite, out _);
 
 			if (!modificationSuccess)
 				throw new SimpleProcessProxyException($"Failed to force read/write permissions at {OpenedProcessHandle}+{objectAddress}.");
@@ -188,7 +189,7 @@ namespace SimplifiedMemoryManager
 
         private void ForceReadWritePermissions(IntPtr objectAddress, long byteCount)
         {
-            bool modificationSuccess = NativeMethods.VirtualProtectEx(OpenedProcessHandle, objectAddress, byteCount, PageReadWrite, out _);
+            bool modificationSuccess = NativeMethods.VirtualProtectEx(OpenedProcessHandle, objectAddress, byteCount, ExecuteReadWrite, out _);
 
             if (!modificationSuccess)
                 throw new SimpleProcessProxyException($"Failed to force read/write permissions at {OpenedProcessHandle}+{objectAddress}.");
@@ -214,7 +215,7 @@ namespace SimplifiedMemoryManager
 
 		private byte[] ReadBytesFromMemory(IntPtr objectAddress, byte[] bytesToRead)
 		{
-			bool success = NativeMethods.ReadProcessMemory(OpenedProcessHandle, objectAddress, bytesToRead, (uint)bytesToRead.Length, out int bytesRead);
+			bool success = NativeMethods.ReadProcessMemory(OpenedProcessHandle, objectAddress, bytesToRead, (long)bytesToRead.Length, out long bytesRead);
 
 			if (!success || bytesRead != bytesToRead.Length)
 			{
