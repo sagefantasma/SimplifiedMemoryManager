@@ -29,5 +29,8 @@ namespace SimplifiedMemoryManager
 
         [DllImport("kernel32.dll", SetLastError = true)]
         public static extern bool VirtualProtectEx(IntPtr hProcess, IntPtr lpBaseAddress, int dwSize, uint flNewProtect, out uint lpflOldProtect);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        public static extern bool VirtualProtectEx(IntPtr hProcess, IntPtr lpBaseAddress, long dwSize, uint flNewProtect, out uint lpflOldProtect);
     }
 }

@@ -21,7 +21,6 @@ namespace SimplifiedMemoryManager
 		private static string ProcessName { get; set; }
 		private static IntPtr ProcessBaseAddress { get; set; }
 		private static IntPtr OpenedProcessHandle { get; set; }
-		private static SPPCancellationTokenSource MasterCancellationTokenSource {get;set;} = new SPPCancellationTokenSource();
 
 		public SimpleProcessProxy(Process process)
 		{
@@ -98,13 +97,15 @@ namespace SimplifiedMemoryManager
 			return buffer;
 		}
 
-		private byte[] GetMemory(int offset, long valueSize)
+		private byte[] GetMemory(IntPtr offset, long valueSize)
 		{
 			try
 			{
 				OpenProcess();
 
-				IntPtr addressToRead = IntPtr.Add(ProcessBaseAddress, offset);
+				//IntPtr addressToRead = IntPtr.Add(ProcessBaseAddress, offset);
+				long address = ProcessBaseAddress.ToInt64() + offset.ToInt64();
+				IntPtr addressToRead = new IntPtr(address);
 
 				byte[] bytesRead = new byte[valueSize];
 				ReadBytesFromMemory(addressToRead, bytesRead);
@@ -121,13 +122,41 @@ namespace SimplifiedMemoryManager
 			}
 		}
 
-		private void SetMemory(int desiredOffset, byte[] value, bool forceWrite)
+		private byte[] ForceGetMemory(IntPtr offset, long valueSize)
+		{
+            try
+            {
+                OpenProcess();
+
+                //IntPtr addressToRead = IntPtr.Add(ProcessBaseAddress, offset);
+                long address = ProcessBaseAddress.ToInt64() + offset.ToInt64();
+                IntPtr addressToRead = new IntPtr(address);
+
+                byte[] bytesRead = new byte[valueSize];
+				ForceReadWritePermissions(addressToRead, valueSize);
+                ReadBytesFromMemory(addressToRead, bytesRead);
+
+                return bytesRead;
+            }
+            finally
+            {
+                if (OpenedProcessHandle != default)
+                {
+                    NativeMethods.CloseHandle(OpenedProcessHandle);
+                    OpenedProcessHandle = default;
+                }
+            }
+        }
+
+		private void SetMemory(IntPtr desiredOffset, byte[] value, bool forceWrite)
 		{
 			try
 			{
 				OpenProcess();
 
-				IntPtr addressToModify = IntPtr.Add(ProcessBaseAddress, desiredOffset);
+				//IntPtr addressToModify = IntPtr.Add(ProcessBaseAddress, desiredOffset);
+				long address = ProcessBaseAddress.ToInt64() + desiredOffset.ToInt64();
+				IntPtr addressToModify = new IntPtr(address);
 
 				if (forceWrite)
 				{
@@ -157,7 +186,15 @@ namespace SimplifiedMemoryManager
 				throw new SimpleProcessProxyException($"Failed to force read/write permissions at {OpenedProcessHandle}+{objectAddress}.");
 		}
 
-		private void WriteBytesToMemory(IntPtr objectAddress, byte[] bytesToWrite)
+        private void ForceReadWritePermissions(IntPtr objectAddress, long byteCount)
+        {
+            bool modificationSuccess = NativeMethods.VirtualProtectEx(OpenedProcessHandle, objectAddress, byteCount, PageReadWrite, out _);
+
+            if (!modificationSuccess)
+                throw new SimpleProcessProxyException($"Failed to force read/write permissions at {OpenedProcessHandle}+{objectAddress}.");
+        }
+
+        private void WriteBytesToMemory(IntPtr objectAddress, byte[] bytesToWrite)
 		{
 			bool modificationSuccess = NativeMethods.WriteProcessMemory(OpenedProcessHandle, objectAddress, bytesToWrite, (uint)bytesToWrite.Length, out int bytesWritten);
 
@@ -195,25 +232,7 @@ namespace SimplifiedMemoryManager
 			return bytesToRead;
 		}
 
-		private static int ScanningResult(ref int foundPosition, List<Task> runningThreads)
-		{
-			while (runningThreads.Any(thread => thread.Status == TaskStatus.Running))
-			{
-
-			}
-
-			if (foundPosition == -1)
-			{
-				return -1;
-			}
-
-			return foundPosition;
-		}
-
-		private static void PatternMatched(object sender, ScanThread.MatchFoundEventArgs index)
-		{
-			MasterCancellationTokenSource.Cancel();
-		}
+		
 		#endregion
 
 		#region Public methods
@@ -225,7 +244,7 @@ namespace SimplifiedMemoryManager
 		/// <param name="memoryOffset">The offset, from index 0 of the proxied process' memory, that holds the boolean you want to invert.</param>
 		/// <param name="booleanSize">If your process stores booleans with more than 1 byte, specify the byte-size here.</param>
 		/// <exception cref="SimpleProcessProxyException"></exception>
-		public void InvertBooleanValue(int memoryOffset, int booleanSize = 1, bool forceWritability = false)
+		public void InvertBooleanValue(IntPtr memoryOffset, int booleanSize = 1, bool forceWritability = false)
 		{
 			byte[] currentValue = GetMemory(memoryOffset, booleanSize);
 
@@ -259,7 +278,7 @@ namespace SimplifiedMemoryManager
 		/// <param name="memoryOffset">Where in the proxied process' memory to begin the modification.</param>
 		/// <param name="offsetValueToWrite">Value to set in memory, beginning at the memoryOffset and extending for the byte-length of the value.</param>
 		/// <exception cref="SimpleProcessProxyException"></exception>
-		public void ModifyProcessOffset(int memoryOffset, short offsetValueToWrite, bool forceWritability = false)
+		public void ModifyProcessOffset(IntPtr memoryOffset, short offsetValueToWrite, bool forceWritability = false)
 		{
 			try
 			{
@@ -279,7 +298,7 @@ namespace SimplifiedMemoryManager
 		/// <param name="memoryOffset">Where in the proxied process' memory to begin the modification.</param>
 		/// <param name="offsetValueToWrite">Value to set in memory, beginning at the memoryOffset and extending for the byte-length of the value.</param>
 		/// <exception cref="SimpleProcessProxyException"></exception>
-		public void ModifyProcessOffset(int memoryOffset, int offsetValueToWrite, bool forceWritability = false)
+		public void ModifyProcessOffset(IntPtr memoryOffset, int offsetValueToWrite, bool forceWritability = false)
 		{
 			try
 			{
@@ -299,7 +318,7 @@ namespace SimplifiedMemoryManager
 		/// <param name="memoryOffset">Where in the proxied process' memory to begin the modification.</param>
 		/// <param name="offsetValueToWrite">Value to set in memory, beginning at the memoryOffset and extending for the byte-length of the value.</param>
 		/// <exception cref="SimpleProcessProxyException"></exception>
-		public void ModifyProcessOffset(int memoryOffset, long offsetValueToWrite, bool forceWritability = false)
+		public void ModifyProcessOffset(IntPtr memoryOffset, long offsetValueToWrite, bool forceWritability = false)
 		{
 			try
 			{
@@ -319,7 +338,7 @@ namespace SimplifiedMemoryManager
 		/// <param name="memoryOffset">Where in the proxied process' memory to begin the modification.</param>
 		/// <param name="offsetValueToWrite">Value to set in memory, beginning at the memoryOffset and extending for the byte-length of the value.</param>
 		/// <exception cref="SimpleProcessProxyException"></exception>
-		public void ModifyProcessOffset(int memoryOffset, double offsetValueToWrite, bool forceWritability = false)
+		public void ModifyProcessOffset(IntPtr memoryOffset, double offsetValueToWrite, bool forceWritability = false)
 		{
 			try
 			{
@@ -339,7 +358,7 @@ namespace SimplifiedMemoryManager
 		/// <param name="memoryOffset">Where in the proxied process' memory to begin the modification.</param>
 		/// <param name="offsetValueToWrite">Value to set in memory, beginning at the memoryOffset and extending for the byte-length of the value.</param>
 		/// <exception cref="SimpleProcessProxyException"></exception>
-		public void ModifyProcessOffset(int memoryOffset, float offsetValueToWrite, bool forceWritability = false)
+		public void ModifyProcessOffset(IntPtr memoryOffset, float offsetValueToWrite, bool forceWritability = false)
 		{
 			try
 			{
@@ -359,7 +378,7 @@ namespace SimplifiedMemoryManager
 		/// <param name="memoryOffset">Where in the proxied process' memory to begin the modification.</param>
 		/// <param name="offsetValueToWrite">Value to set in memory, beginning at the memoryOffset and extending for the byte-length of the value.</param>
 		/// <exception cref="SimpleProcessProxyException"></exception>
-		public void ModifyProcessOffset(int memoryOffset, bool offsetValueToWrite, bool forceWritability = false)
+		public void ModifyProcessOffset(IntPtr memoryOffset, bool offsetValueToWrite, bool forceWritability = false)
 		{
 			try
 			{
@@ -379,7 +398,7 @@ namespace SimplifiedMemoryManager
 		/// <param name="memoryOffset">Where in the proxied process' memory to begin the modification.</param>
 		/// <param name="offsetValueToWrite">Value to set in memory, beginning at the memoryOffset and extending for the byte-length of the value.</param>
 		/// <exception cref="SimpleProcessProxyException"></exception>
-		public void ModifyProcessOffset(int memoryOffset, char offsetValueToWrite, bool forceWritability = false)
+		public void ModifyProcessOffset(IntPtr memoryOffset, char offsetValueToWrite, bool forceWritability = false)
 		{
 			try
 			{
@@ -399,7 +418,7 @@ namespace SimplifiedMemoryManager
 		/// <param name="memoryOffset">Where in the proxied process' memory to begin the modification.</param>
 		/// <param name="offsetValueToWrite">Value to set in memory, beginning at the memoryOffset and extending for the byte-length of the value.</param>
 		/// <exception cref="SimpleProcessProxyException"></exception>
-		public void ModifyProcessOffset(int memoryOffset, byte[] offsetValueToWrite, bool forceWritability = false)
+		public void ModifyProcessOffset(IntPtr memoryOffset, byte[] offsetValueToWrite, bool forceWritability = false)
 		{
 			try
 			{
@@ -419,7 +438,7 @@ namespace SimplifiedMemoryManager
 		/// <param name="memoryOffset">Where in the proxied process' memory to begin the modification.</param>
 		/// <param name="offsetValueToWrite">Value to set in memory, beginning at the memoryOffset and extending for the byte-length of the value.</param>
 		/// <exception cref="SimpleProcessProxyException"></exception>
-		public void ModifyProcessOffset(int memoryOffset, string offsetValueToWrite, bool forceWritability = false)
+		public void ModifyProcessOffset(IntPtr memoryOffset, string offsetValueToWrite, bool forceWritability = false)
 		{
 			try
 			{
@@ -441,7 +460,7 @@ namespace SimplifiedMemoryManager
 		/// <param name="bytesToRead">Amount of bytes to read in and return.</param>
 		/// <returns>The bytes found at the provided offset within the proxied process.</returns>
 		/// <exception cref="SimpleProcessProxyException"></exception>
-		public byte[] ReadProcessOffset(int memoryOffset, long bytesToRead)
+		public byte[] ReadProcessOffset(IntPtr memoryOffset, long bytesToRead)
 		{
 			try
 			{
@@ -462,7 +481,7 @@ namespace SimplifiedMemoryManager
 		{
 			try
 			{                
-				return GetProcessSnapshot(ProcessToProxy.PrivateMemorySize64);
+				return GetProcessSnapshot(ProcessToProxy.PeakPagedMemorySize64);
 			}
 			catch(Exception e)
 			{
@@ -470,58 +489,68 @@ namespace SimplifiedMemoryManager
 			}
 		}
 
-		/// <summary>
-		/// Kicks off a series of tasks(one for each logical processor available on your machine)
-		/// to begin asynchronously scanning memory for a hexadecimal pattern(also known as an
-		/// array of bytes).
-		/// </summary>
-		/// <param name="pattern">The SimplePattern representation of an AoB to scan for</param>
-		/// <param name="memoryToScan">Optional - provide this to scan this specific array of memory.
-		/// If this is not provided, this method will automatically scan the memory
-		/// of the process associated with the SimpleProcessProxy.</param>
-		/// <param name="quantityToFind">Optional - provide an integer to provide a specific quantity
-		/// of matches in memory. To find all matches in memory, enter -1.</param>
-		/// <returns>The index of the starting position of the provided pattern, or -1 if not found.</returns>
-		public int ScanMemoryForPattern(SimplePattern pattern, byte[] memoryToScan = null, int quantityToFind = 1)
+        public IntPtr ScanMemoryForUniquePattern(SimplePattern pattern, byte[] memoryToScan = null)
+        {
+            List<IntPtr> results = new List<IntPtr>();
+
+            ScanManager scanManager = new ScanManager();
+
+            if (memoryToScan != null)
+            {
+                scanManager.ByteArrayScan(memoryToScan, pattern);
+            }
+            else
+            {
+                scanManager.FullProcessScan(pattern, ProcessToProxy, ForceGetMemory);
+            }
+
+            if (scanManager.ScanResult.Count == 0)
+            {
+                throw new SimpleProcessProxyException("Pattern not found in process memory.");
+            }
+
+            return scanManager.ScanResult.First();
+        }
+
+        /// <summary>
+        /// Kicks off a series of tasks(one for each logical processor available on your machine)
+        /// to begin asynchronously scanning memory for a hexadecimal pattern(also known as an
+        /// array of bytes).
+        /// </summary>
+        /// <param name="pattern">The SimplePattern representation of an AoB to scan for</param>
+        /// <param name="memoryToScan">Optional - provide this to scan this specific array of memory.
+        /// If this is not provided, this method will automatically scan the memory
+        /// of the process associated with the SimpleProcessProxy.</param>
+        /// <param name="quantityToFind">Optional - provide an integer to provide a specific quantity
+        /// of matches in memory. By default, this is set to -1 to catch all pattern matches.</param>
+        /// <returns>The index of the starting position of the provided pattern, or -1 if not found.</returns>
+        public List<IntPtr> ScanMemoryForPattern(SimplePattern pattern, byte[] memoryToScan = null, int quantityToFind = -1)
 		{
 			if(quantityToFind == 0)
-				throw new SimpleProcessProxyException("Invalid quantity to find. Provide a positive integer, or -1 to find all matches.");
-			MasterCancellationTokenSource = new SPPCancellationTokenSource(quantityToFind);
+				throw new SimpleProcessProxyException("Invalid quantity to find. Provide a positive integer.");
+			if (quantityToFind == 1)
+				throw new SimpleProcessProxyException("Invalid quantity to find. Use ScanMemoryForUniquePattern to find only one result.");
 			List<IntPtr> results = new List<IntPtr>();
 
-			if(memoryToScan == null)
-				memoryToScan = GetProcessSnapshot();
+			ScanManager scanManager = new ScanManager(quantityToFind);
 
-			/*
-			 * get system info to see how many cpu cores we have, and then divide the memoryToScan 
-			 * equally between the cpu cores. kick off each cpu core to its own thread, and kill
-			 * them all once ONE has had a successful match.
-			*/
-			double availableCores = Environment.ProcessorCount;            
-			double bufferSizePerThread = Math.Ceiling(memoryToScan.Length / availableCores);
-			List<ScanThread> scanThreads = new List<ScanThread>();
-
-			int bufferPosition = 0;
-			for(int i = 0; i < availableCores; i++)
+			if (memoryToScan != null)
 			{
-				ScanThread scanThread = new ScanThread(pattern, MasterCancellationTokenSource.Token, PatternMatched);
-
-				int realBufferSize = Math.Min((int)bufferSizePerThread, memoryToScan.Length - bufferPosition);
-				scanThread.Data = new byte[realBufferSize];
-				Array.Copy(memoryToScan, bufferPosition, scanThread.Data, 0, realBufferSize);
-				scanThreads.Add(scanThread);
-
-				bufferPosition += realBufferSize;
+				scanManager.ByteArrayScan(memoryToScan, pattern);
+			}
+            else
+            {
+				scanManager.FullProcessScan(pattern, ProcessToProxy, GetMemory);
+			}
+			
+			scanManager.InitiateScan();
+			
+			if(scanManager.ScanResult.Count == 0)
+			{
+				throw new SimpleProcessProxyException("Pattern not found in process memory.");
 			}
 
-			int foundPosition = -1;
-			List<Task> runningThreads = new List<Task>();
-			foreach(ScanThread scanThread in scanThreads)
-			{
-				Task scanningTask = Task.Factory.StartNew(() => scanThread.ScanForPattern(ref foundPosition));
-				runningThreads.Add(scanningTask);
-			}
-			return ScanningResult(ref foundPosition, runningThreads);
+			return scanManager.ScanResult;
 		}
 		#endregion
 	}
