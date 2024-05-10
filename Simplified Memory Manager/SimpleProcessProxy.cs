@@ -4,6 +4,8 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Net.Security;
+using System.Runtime.InteropServices;
+using System.Security.Principal;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -13,8 +15,6 @@ namespace SimplifiedMemoryManager
 	public class SimpleProcessProxy : IDisposable
 	{
 		#region Internals
-		private const int AllAccess = 0x1F0FFF;
-		private const int ExecuteReadWrite = 0x40;
 		private bool disposedValue;
 
 		public static Process ProcessToProxy { get; set; }
@@ -33,7 +33,7 @@ namespace SimplifiedMemoryManager
 		{
 			ValidateProcessToProxy();
 
-			OpenedProcessHandle = NativeMethods.OpenProcess(AllAccess, false, ProcessToProxy.Id);
+			OpenedProcessHandle = NativeMethods.OpenProcess(AccessPrivileges.AllAccess | AccessPrivileges.ProcessVMOperation, false, ProcessToProxy.Id);
 		}
 
 		private void ValidateProcessToProxy()
@@ -123,19 +123,14 @@ namespace SimplifiedMemoryManager
 			}
 		}
 
-		private byte[] ForceGetMemory(IntPtr offset, long valueSize)
+		private byte[] GetMemoryOutsideMainModule(IntPtr offset, long valueSize)
 		{
             try
             {
-                OpenProcess();
-
-                //IntPtr addressToRead = IntPtr.Add(ProcessBaseAddress, offset);
-                long address = ProcessBaseAddress.ToInt64() + offset.ToInt64();
-                IntPtr addressToRead = new IntPtr(address);
+				OpenProcess();
 
                 byte[] bytesRead = new byte[valueSize];
-				ForceReadWritePermissions(addressToRead, valueSize);
-                ReadBytesFromMemory(addressToRead, bytesRead);
+                ReadBytesFromMemory(offset, bytesRead);
 
                 return bytesRead;
             }
@@ -179,20 +174,77 @@ namespace SimplifiedMemoryManager
 			}
 		}
 
-		private void ForceReadWritePermissions(IntPtr objectAddress, int byteCount)
+        private void SetMemoryOutsideMainModule(IntPtr offset, byte[] value)
 		{
-			bool modificationSuccess = NativeMethods.VirtualProtectEx(OpenedProcessHandle, objectAddress, byteCount, ExecuteReadWrite, out _);
+            try
+            {
+                OpenProcess();
+
+                WriteBytesToMemory(offset, value);
+            }
+            catch (Exception e)
+            {
+                throw new SimpleProcessProxyException($"Something unexpected went wrong when trying to modify the process' memory! {e}");
+            }
+            finally
+            {
+                if (OpenedProcessHandle != default)
+                {
+                    NativeMethods.CloseHandle(OpenedProcessHandle);
+                    OpenedProcessHandle = default;
+                }
+            }
+        }
+
+        private static void EnableDisablePrivilege(string PrivilegeName, bool EnableDisable)
+        {
+            if (!NativeMethods.LookupPrivilegeValue(null, PrivilegeName, out var luid)) 
+				throw new Exception($"EnableDisablePrivilege: LookupPrivilegeValue failed: {Marshal.GetExceptionForHR(Marshal.GetHRForLastWin32Error()).Message}");
+
+            if (!NativeMethods.OpenProcessToken(Process.GetCurrentProcess().SafeHandle, TokenAccessLevels.AdjustPrivileges, out var tokenHandle)) 
+				throw new Exception($"EnableDisablePrivilege: OpenProcessToken failed: {Marshal.GetExceptionForHR(Marshal.GetHRForLastWin32Error()).Message}");
+
+            var tokenPrivileges = new TOKEN_PRIVILEGES { PrivilegeCount = 1, Privileges = new[] { new LUID_AND_ATTRIBUTES { LUID = luid, Attributes = (uint)(EnableDisable ? 2 : 4) } } };
+            if (!NativeMethods.AdjustTokenPrivileges(tokenHandle, false, ref tokenPrivileges, 0, IntPtr.Zero, out _))
+            {
+                tokenHandle.Dispose();
+                throw new Exception($"EnableDisablePrivilege: AdjustTokenPrivileges failed: {Marshal.GetExceptionForHR(Marshal.GetHRForLastWin32Error()).Message}");
+            }
+            else tokenHandle.Dispose();
+        }
+
+
+        private void ForceReadWritePermissions(IntPtr objectAddress, int byteCount)
+		{
+			bool modificationSuccess;
+
+			lock (ProcessToProxy) 
+			{
+				modificationSuccess = NativeMethods.VirtualProtectEx(OpenedProcessHandle, objectAddress, byteCount, AccessPrivileges.ExecuteReadWrite, out _);
+			}
 
 			if (!modificationSuccess)
-				throw new SimpleProcessProxyException($"Failed to force read/write permissions at {OpenedProcessHandle}+{objectAddress}.");
+				throw new SimpleProcessProxyException($"Failed to force read/write permissions at {OpenedProcessHandle}+{objectAddress} with error {Marshal.GetLastWin32Error()}");
 		}
 
-        private void ForceReadWritePermissions(IntPtr objectAddress, long byteCount)
+        private void ForceReadWritePermissionsAdmin(IntPtr objectAddress, long byteCount)
         {
-            bool modificationSuccess = NativeMethods.VirtualProtectEx(OpenedProcessHandle, objectAddress, byteCount, ExecuteReadWrite, out _);
+			bool modificationSuccess;
 
-            if (!modificationSuccess)
-                throw new SimpleProcessProxyException($"Failed to force read/write permissions at {OpenedProcessHandle}+{objectAddress}.");
+			Process.EnterDebugMode();
+			EnableDisablePrivilege("SeDebugPrivilege", true);
+
+            lock (ProcessToProxy)
+			{
+				modificationSuccess = NativeMethods.VirtualProtectEx(OpenedProcessHandle, objectAddress, byteCount, AccessPrivileges.ExecuteReadWrite, out _);
+			}
+
+			if (!modificationSuccess)
+			{
+				var errorCode = Marshal.GetLastWin32Error();
+				//throw new SimpleProcessProxyException($"Failed to force read/write permissions at {OpenedProcessHandle}+{objectAddress}.");
+				return;
+			}
         }
 
         private void WriteBytesToMemory(IntPtr objectAddress, byte[] bytesToWrite)
@@ -495,15 +547,24 @@ namespace SimplifiedMemoryManager
             List<IntPtr> results = new List<IntPtr>();
 
             ScanManager scanManager = new ScanManager();
+            
+			if (OpenedProcessHandle != IntPtr.Zero)
+            {
+                NativeMethods.CloseHandle(OpenedProcessHandle);
+                OpenedProcessHandle = default;
+            }
 
-            if (memoryToScan != null)
-            {
-                scanManager.ByteArrayScan(memoryToScan, pattern);
-            }
-            else
-            {
-                scanManager.FullProcessScan(pattern, ProcessToProxy, ForceGetMemory);
-            }
+			lock (ProcessToProxy)
+			{
+				if (memoryToScan != null)
+				{
+					scanManager.ByteArrayScan(memoryToScan, pattern);
+				}
+				else
+				{
+					scanManager.FullProcessScan(pattern, ProcessToProxy, GetMemoryOutsideMainModule);
+				}
+			}
 
             if (scanManager.ScanResult.Count == 0)
             {
@@ -512,6 +573,60 @@ namespace SimplifiedMemoryManager
 
             return scanManager.ScanResult.First();
         }
+
+		public IntPtr FollowPointer(IntPtr pointer, bool bigEndian, int sizeOfPointer = 8)
+		{
+			try
+			{
+				OpenProcess();
+
+				byte[] memoryPointedTo = new byte[sizeOfPointer];
+				ReadBytesFromMemory(new IntPtr(ProcessBaseAddress.ToInt64() + pointer.ToInt64()), memoryPointedTo);
+
+				if (bigEndian)
+				{
+					memoryPointedTo = memoryPointedTo.Reverse().ToArray();
+				}
+				
+				if (!Environment.Is64BitOperatingSystem)
+				{
+					return new IntPtr(BitConverter.ToInt32(memoryPointedTo, 0));
+				}
+				else
+				{
+					if(sizeOfPointer < 8)
+					{
+						//realistically, if it isn't 8, its 4. but who knows.
+						List<byte> listPadder = new List<byte>();
+                        listPadder.AddRange(memoryPointedTo);
+                        for (int i = 0; i < sizeOfPointer; i++)
+						{
+							listPadder.Add(0);
+						}
+						memoryPointedTo = listPadder.ToArray();
+					}
+					return new IntPtr(BitConverter.ToInt64(memoryPointedTo, 0));
+				}
+			}
+            finally
+            {
+                if (OpenedProcessHandle != default)
+                {
+                    NativeMethods.CloseHandle(OpenedProcessHandle);
+                    OpenedProcessHandle = default;
+                }
+            }
+        }
+
+		public byte[] GetMemoryFromPointer(IntPtr pointer, int size)
+		{
+			return GetMemoryOutsideMainModule(pointer, size);
+		}
+
+		public void SetMemoryAtPointer(IntPtr pointer, byte[] data)
+		{
+			SetMemoryOutsideMainModule(pointer, data);
+		}
 
         /// <summary>
         /// Kicks off a series of tasks(one for each logical processor available on your machine)
@@ -541,7 +656,7 @@ namespace SimplifiedMemoryManager
 			}
             else
             {
-				scanManager.FullProcessScan(pattern, ProcessToProxy, GetMemory);
+				scanManager.FullProcessScan(pattern, ProcessToProxy, GetMemoryOutsideMainModule);
 			}
 			
 			scanManager.InitiateScan();
