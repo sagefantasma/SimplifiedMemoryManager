@@ -7,16 +7,20 @@ public static class RealMemory
     public readonly static string ValidAoBInMemory = "6D 61 70 2E 63";
 	public readonly static int ValidAoBLocation = 7443691;
     public readonly static string InvalidAoBInMemory = "6D 61 50 2E 63";
+	private static readonly object Lock = new object();
 
     public static byte[] LoadSampleMemory()
     {
-        using (FileStream fileStream = File.Open("TestingData/sampleMemory.mem", FileMode.Open))
-        {
-            using (BinaryReader reader = new BinaryReader(fileStream, Encoding.UTF8, false))
-            {
-                return reader.ReadBytes((int)fileStream.Length);
-            }
-        }
+		lock (Lock)
+		{
+			using (FileStream fileStream = File.Open("TestingData/sampleMemory.mem", FileMode.Open))
+			{
+				using (BinaryReader reader = new BinaryReader(fileStream, Encoding.UTF8, false))
+				{
+					return reader.ReadBytes((int)fileStream.Length);
+				}
+			}
+		}
     }
 }
 
