@@ -18,10 +18,9 @@ public class ScanThreadTest : IDisposable
         {
             ((ScanThread)sender).ThreadRequestedCancellation = true;
         }
-        _matchedIndex = args.Index;
     }
 
-    private static ScanThread ConstructFullScanThread(out int result, bool needValidAoB = false, string? customAoB = null)
+    private static ScanThread ConstructFullScanThread(ScanManager manager, bool needValidAoB = false, string? customAoB = null)
     {
         byte[] sampleMemory = RealMemory.LoadSampleMemory();
         SimplePattern simplePattern;
@@ -38,9 +37,8 @@ public class ScanThreadTest : IDisposable
                 simplePattern = new SimplePattern(RealMemory.InvalidAoBInMemory);
             }
         }
-        ScanThread scanThread = new ScanThread(simplePattern, _cancellationTokenSource.Token, TestPatternMatched);
+        ScanThread scanThread = new ScanThread(simplePattern, _cancellationTokenSource.Token, TestPatternMatched, manager);
         scanThread.Data = sampleMemory;
-        result = 0;
 
         return scanThread;
     }
@@ -51,9 +49,10 @@ public class ScanThreadTest : IDisposable
 	{
 		//Arrange
 		SimplePattern simplePattern = new SimplePattern("");
+        ScanManager scanManager = new ScanManager();
 
         //Act
-        ScanThread scanThread = new ScanThread(simplePattern, _cancellationTokenSource.Token, TestPatternMatched);
+        ScanThread scanThread = new ScanThread(simplePattern, _cancellationTokenSource.Token, TestPatternMatched, scanManager);
 		
 		//Assert
 		Assert.NotNull(scanThread);
@@ -64,9 +63,10 @@ public class ScanThreadTest : IDisposable
     {
         //Arrange
         SimplePattern simplePattern = new SimplePattern("");
+        ScanManager scanManager = new ScanManager();
 
         //Act
-        ScanThread scanThread = new ScanThread(simplePattern, _cancellationTokenSource.Token, TestPatternMatched);
+        ScanThread scanThread = new ScanThread(simplePattern, _cancellationTokenSource.Token, TestPatternMatched, scanManager);
 
         //Assert
         Assert.StrictEqual(scanThread.PatternMatched, TestPatternMatched);
@@ -77,7 +77,9 @@ public class ScanThreadTest : IDisposable
 	public void CanScanForPattern(int expectedResult, string inputString)
 	{
         //Arrange
-        ScanThread scanThread = ConstructFullScanThread(out int result, customAoB: inputString);
+        ScanManager scanManager = new ScanManager();
+        ScanThread scanThread = ConstructFullScanThread(scanManager, customAoB: inputString);
+        nint result = 0;
 		
 		//Act
 		scanThread.ScanForPattern(ref result);
@@ -90,7 +92,9 @@ public class ScanThreadTest : IDisposable
     public void PatternMatchedEventIsCalledOnSuccess()
     {
         //Arrange
-        ScanThread scanThread = ConstructFullScanThread(out int result, true);
+        ScanManager manager = new ScanManager();
+        ScanThread scanThread = ConstructFullScanThread(manager, true);
+        nint result = 0;
 
         //Act
         scanThread.ScanForPattern(ref result);
@@ -103,7 +107,9 @@ public class ScanThreadTest : IDisposable
     public void PatternMatchedEventIsNotCalledOnFailure()
     {
         //Arrange
-        ScanThread scanThread = ConstructFullScanThread(out int result, false);
+        ScanManager manager = new ScanManager();
+        ScanThread scanThread = ConstructFullScanThread(manager, false);
+        nint result = 0;
 
         //Act
         scanThread.ScanForPattern(ref result);
@@ -116,25 +122,29 @@ public class ScanThreadTest : IDisposable
     public void PatternMatchedEventArgsAreNotZeroOnSuccess()
     {
         //Arrange
-        ScanThread scanThread = ConstructFullScanThread(out int result, true);
+        ScanManager manager = new ScanManager();
+        ScanThread scanThread = ConstructFullScanThread(manager, true);
+        nint result = 0;
 
         //Act
         scanThread.ScanForPattern(ref result);
 
         //Assert
-        Assert.NotEqual(0, _matchedIndex);
+        Assert.NotEqual(0, result);
     }
 
     [Fact]
     public void PatternMatchedEventArgsAreZeroOnFailure()
     {
         //Arrange
-        ScanThread scanThread = ConstructFullScanThread(out int result, false);
+        ScanManager manager = new ScanManager();
+        ScanThread scanThread = ConstructFullScanThread(manager, false);
+        nint result = 0;
 
         //Act
         scanThread.ScanForPattern(ref result);
 
         //Assert
-        Assert.Equal(0, _matchedIndex);
+        Assert.Equal(0, result);
     }
 }

@@ -97,7 +97,7 @@ public class SimpleProcessProxyIntegrationTest : IDisposable
         using (SimpleProcessProxy simpleProcessProxy = CreateTestProxy())
         {
             byte[] currentValue = simpleProcessProxy.ReadProcessOffset(0, 1000);
-            int indexToModify = currentValue.ToList().IndexOf(0);
+            nint indexToModify = currentValue.ToList().IndexOf(0);
 
             //Act
             simpleProcessProxy.ModifyProcessOffset(indexToModify, inputData, forceWritability: true);
@@ -115,7 +115,7 @@ public class SimpleProcessProxyIntegrationTest : IDisposable
         using (SimpleProcessProxy simpleProcessProxy = CreateTestProxy())
         {
             byte[] currentValue = simpleProcessProxy.ReadProcessOffset(0, 1000);
-            int indexToModify = currentValue.ToList().IndexOf(0);            
+            nint indexToModify = currentValue.ToList().IndexOf(0);            
 
             //Act
             void safeModification()
@@ -136,15 +136,15 @@ public class SimpleProcessProxyIntegrationTest : IDisposable
             byte[] fakedMemory = RealMemory.LoadSampleMemory();
 
             //Act
-            int result = simpleProcessProxy.ScanMemoryForPattern(new SimplePattern(RealMemory.ValidAoBInMemory), fakedMemory);
+            List<nint> result = simpleProcessProxy.ScanMemoryForPattern(new SimplePattern(RealMemory.ValidAoBInMemory), fakedMemory);
 
             //Assert
-            Assert.True(result > 0);
+            Assert.True(result.Count > 0);
         }
     }
 
     [Fact]
-    public void ScanForInvalidAoBReturnsNegativeOne()
+    public void ScanForInvalidAoBThrowsError()
     {
         //Arrange
         using (SimpleProcessProxy simpleProcessProxy = CreateTestProxy())
@@ -152,10 +152,13 @@ public class SimpleProcessProxyIntegrationTest : IDisposable
             byte[] fakedMemory = RealMemory.LoadSampleMemory();
 
             //Act
-            int result = simpleProcessProxy.ScanMemoryForPattern(new SimplePattern(RealMemory.InvalidAoBInMemory), fakedMemory);
+            void badAoBScan()
+            {
+                List<nint> result = simpleProcessProxy.ScanMemoryForPattern(new SimplePattern(RealMemory.InvalidAoBInMemory), fakedMemory);
+            }
 
             //Assert
-            Assert.Equal(-1, result);
+            Assert.Throws<SimpleProcessProxyException>(badAoBScan);
         }
     }
 }
