@@ -5,7 +5,7 @@ namespace SimplifiedMemoryManager
 {
 	public class SPPCancellationTokenSource : CancellationTokenSource
 	{
-		public static int CancellationThreshold {get;set;}
+		public int CancellationThreshold {get;set;}
 		private readonly static object CancellationLock = new object();
 		
 		public new void Cancel()
