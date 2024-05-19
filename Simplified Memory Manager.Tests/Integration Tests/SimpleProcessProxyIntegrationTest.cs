@@ -164,4 +164,20 @@ public class SimpleProcessProxyIntegrationTest : IDisposable
             Assert.Throws<SimpleProcessProxyException>(badAoBScan);
         }
     }
+
+    [Fact]
+    public void CanScanForUniquePattern()
+    {
+        //Arrange
+        using (SimpleProcessProxy proxy = CreateTestProxy())
+        {
+            byte[] fakedMemory = RealMemory.LoadSampleMemory();
+
+            //Act
+            nint result = proxy.ScanMemoryForUniquePattern(new SimplePattern(RealMemory.ValidAoBInMemory), fakedMemory);
+
+            //Assert
+            Assert.True(result > 0);
+        }
+    }
 }
