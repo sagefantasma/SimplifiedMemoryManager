@@ -130,6 +130,9 @@ public class SimpleProcessProxyIntegrationTest : IDisposable
     [Fact]
     public void ScanForValidAoBReturnsPositiveIndex()
     {
+        //NOTE: for some reason, this test always fails when run with all the other tests.
+        //      idk why. but if you run it by itself, it passes.
+
         //Arrange
         using(SimpleProcessProxy simpleProcessProxy = CreateTestProxy())
         {
