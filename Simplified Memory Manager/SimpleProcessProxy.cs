@@ -659,8 +659,6 @@ namespace SimplifiedMemoryManager
 				scanManager.FullProcessScan(pattern, ProcessToProxy, GetMemoryOutsideMainModule);
 			}
 			
-			scanManager.InitiateScan();
-			
 			if(scanManager.ScanResult.Count == 0)
 			{
 				throw new SimpleProcessProxyException("Pattern not found in process memory.");

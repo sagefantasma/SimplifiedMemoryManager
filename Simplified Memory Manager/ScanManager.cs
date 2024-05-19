@@ -46,18 +46,10 @@ namespace SimplifiedMemoryManager
             MasterCancellationTokenSource.Cancel();
         }
 
-        public bool InitiateScan()
+        private bool InitiateScan()
         {
             IntPtr foundPosition = new IntPtr();
-            /*List<Thread> runningThreads = new List<Thread>();
-            foreach(ScanThread scanThread in ScanThreads)
-            {
-                ThreadStart threadStart = new ThreadStart(() => scanThread.ScanForPattern(ref foundPosition));
-                ThreadPool.SetMaxThreads((int) AvailableCores, 1);
-                Thread scanningThread = new Thread(() => scanThread.ScanForPattern(ref foundPosition));
-                scanningThread.Start();
-                runningThreads.Add(scanningThread);
-            }*/
+
             List<Task> runningThreads = new List<Task>();
             foreach (ScanThread scanThread in ScanThreads)
             {
@@ -87,9 +79,11 @@ namespace SimplifiedMemoryManager
 
                 bufferPosition += realBufferSize;
             }
+
+            InitiateScan();
         }
 
-        public void FullProcessScan(SimplePattern pattern, Process processToProxy, Func<IntPtr, long, byte[]> GetMemory)
+        internal void FullProcessScan(SimplePattern pattern, Process processToProxy, Func<IntPtr, long, byte[]> GetMemory)
         {
             foreach(ProcessModule module in processToProxy.Modules)
             {
