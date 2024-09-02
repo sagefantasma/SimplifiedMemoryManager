@@ -29,21 +29,34 @@ namespace SimplifiedMemoryManager
 			ProcessName = process.ProcessName;
 		}
 
-		private void OpenProcess()
+		private void ProxyProcess()
 		{
 			ValidateProcessToProxy();
 
 			OpenedProcessHandle = NativeMethods.OpenProcess(AccessPrivileges.AllAccess | AccessPrivileges.ProcessVMOperation, false, ProcessToProxy.Id);
+
+			if(OpenedProcessHandle == null)
+			{
+                var winError = Marshal.GetLastWin32Error();
+				throw new SimpleProcessProxyException($"Failed to open process. LastWin32Error: {winError}");
+			}
 		}
 
 		private void ValidateProcessToProxy()
 		{
 			if (ProcessToProxy == null || ProcessToProxy.HasExited)
 			{
-				ProcessToProxy = Process.GetProcessesByName(ProcessName).FirstOrDefault();
-				if (ProcessToProxy == default)
+				try
 				{
-					throw new SimpleProcessProxyException($"Failed to find process {ProcessName} to proxy");
+					ProcessToProxy = Process.GetProcessesByName(ProcessName).FirstOrDefault();
+					if (ProcessToProxy == default)
+					{
+						throw new SimpleProcessProxyException($"Failed to find process {ProcessName} to proxy");
+					}
+				}
+				catch(Exception e)
+				{
+					throw new SimpleProcessProxyAggregateException("Something unexpected went wrong when validating the requested process proxy!", e);
 				}
 			}
 		}
@@ -86,32 +99,45 @@ namespace SimplifiedMemoryManager
 			byte[] buffer = new byte[processSize];
 			try
 			{
-				OpenProcess();
-				NativeMethods.ReadProcessMemory(OpenedProcessHandle, ProcessBaseAddress, buffer, (uint)buffer.Length, out int numBytesRead);
-              //NativeMethods.ReadProcessMemory(OpenedProcessHandle, objectAddress, bytesToRead, (uint)bytesToRead.Length, out int bytesRead);
+				ProxyProcess();
+				bool success = NativeMethods.ReadProcessMemory(OpenedProcessHandle, ProcessBaseAddress, buffer, (uint)buffer.Length, out int numBytesRead);
+				if (!success)
+					throw new SimpleProcessProxyException("Failed to read process memory");
             }
 			catch (Exception e)
 			{
-				throw new SimpleProcessProxyException($"Failed to read process `{ProcessName}`. Is it running?", e);
+				var winError = Marshal.GetLastWin32Error();
+				throw new SimpleProcessProxyAggregateException($"Failed to get snapshot for process `{ProcessName}`. LastWin32Error: {winError}", e);
 			}
 
 			return buffer;
 		}
 
-		private byte[] GetMemory(IntPtr offset, long valueSize)
+		private byte[] GetMemoryWithinMainModule(IntPtr offset, long bytesToRead)
 		{
-			try
+            try
 			{
-				OpenProcess();
-
-				//IntPtr addressToRead = IntPtr.Add(ProcessBaseAddress, offset);
-				long address = ProcessBaseAddress.ToInt64() + offset.ToInt64();
+                ProxyProcess();
+                long address = ProcessBaseAddress.ToInt64() + offset.ToInt64();
 				IntPtr addressToRead = new IntPtr(address);
-
-				byte[] bytesRead = new byte[valueSize];
+				
+				byte[] bytesRead = new byte[bytesToRead];
 				ReadBytesFromMemory(addressToRead, bytesRead);
 
 				return bytesRead;
+			}
+			catch(SimpleProcessProxyException sppe)
+			{
+				throw sppe;
+			}
+			catch(OverflowException oe)
+			{
+				throw new SimpleProcessProxyAggregateException($"Failed to create valid address to read", oe);
+			}
+			catch(Exception e)
+			{
+                var winError = Marshal.GetLastWin32Error();
+				throw new SimpleProcessProxyAggregateException($"Something unexpected went wrong when accessing memory within main module. LastWin32Error: {winError}", e);
 			}
 			finally
 			{
@@ -123,14 +149,14 @@ namespace SimplifiedMemoryManager
 			}
 		}
 
-		private byte[] GetMemoryOutsideMainModule(IntPtr offset, long valueSize)
+		private byte[] GetMemoryOutsideMainModule(IntPtr addressToRead, long bytesToRead)
 		{
             try
             {
-				OpenProcess();
+				ProxyProcess();
 
-                byte[] bytesRead = new byte[valueSize];
-                ReadBytesFromMemory(offset, bytesRead);
+                byte[] bytesRead = new byte[bytesToRead];
+                ReadBytesFromMemory(addressToRead, bytesRead);
 
                 return bytesRead;
             }
@@ -144,13 +170,12 @@ namespace SimplifiedMemoryManager
             }
         }
 
-		private void SetMemory(IntPtr desiredOffset, byte[] value, bool forceWrite)
+		private void SetMemoryWithinMainModule(IntPtr desiredOffset, byte[] value, bool forceWrite)
 		{
 			try
 			{
-				OpenProcess();
+				ProxyProcess();
 
-				//IntPtr addressToModify = IntPtr.Add(ProcessBaseAddress, desiredOffset);
 				long address = ProcessBaseAddress.ToInt64() + desiredOffset.ToInt64();
 				IntPtr addressToModify = new IntPtr(address);
 
@@ -160,9 +185,13 @@ namespace SimplifiedMemoryManager
 				}
 				WriteBytesToMemory(addressToModify, value);
 			}
-			catch (Exception e)
+            catch (SimpleProcessProxyException sppe)
+            {
+                throw sppe;
+            }
+            catch (Exception e)
 			{
-				throw new SimpleProcessProxyException($"Something unexpected went wrong when trying to modify the process' memory! {e}");
+				throw new SimpleProcessProxyAggregateException($"Something unexpected went wrong when trying to modify the process' memory!", e);
 			}
 			finally
 			{
@@ -178,13 +207,17 @@ namespace SimplifiedMemoryManager
 		{
             try
             {
-                OpenProcess();
+                ProxyProcess();
 
                 WriteBytesToMemory(offset, value);
             }
+            catch (SimpleProcessProxyException sppe)
+            {
+                throw sppe;
+            }
             catch (Exception e)
             {
-                throw new SimpleProcessProxyException($"Something unexpected went wrong when trying to modify the process' memory! {e}");
+                throw new SimpleProcessProxyAggregateException($"Something unexpected went wrong when trying to modify memory outside main module!", e);
             }
             finally
             {
@@ -213,7 +246,6 @@ namespace SimplifiedMemoryManager
             else tokenHandle.Dispose();
         }
 
-
         private void ForceReadWritePermissions(IntPtr objectAddress, int byteCount)
 		{
 			bool modificationSuccess;
@@ -224,7 +256,7 @@ namespace SimplifiedMemoryManager
 			}
 
 			if (!modificationSuccess)
-				throw new SimpleProcessProxyException($"Failed to force read/write permissions at {OpenedProcessHandle}+{objectAddress} with error {Marshal.GetLastWin32Error()}");
+				throw new SimpleProcessProxyException($"Failed to force read/write permissions at {objectAddress} with error code: {Marshal.GetLastWin32Error()}");
 		}
 
         private void ForceReadWritePermissionsAdmin(IntPtr objectAddress, long byteCount)
@@ -251,17 +283,18 @@ namespace SimplifiedMemoryManager
 		{
 			bool modificationSuccess = NativeMethods.WriteProcessMemory(OpenedProcessHandle, objectAddress, bytesToWrite, (uint)bytesToWrite.Length, out int bytesWritten);
 
-			if (!modificationSuccess || bytesWritten != bytesToWrite.Length)
+            if (!modificationSuccess || bytesWritten != bytesToWrite.Length)
 			{
-				if (!modificationSuccess)
+                var winError = Marshal.GetLastWin32Error();
+                if (!modificationSuccess)
 				{
-					throw new SimpleProcessProxyException("Failed to write to process memory.");
+					throw new SimpleProcessProxyException($"Failed to write to process memory. Last Win32Error code: {winError}");
 				}
 				if (bytesWritten != bytesToWrite.Length)
 				{
-					throw new SimpleProcessProxyException($"We tried to write {bytesToWrite.Length} bytes, but ended up writing {bytesWritten}");
+					throw new SimpleProcessProxyException($"We tried to write {bytesToWrite.Length} bytes, but ended up writing {bytesWritten}. Last Win32Error code: {winError}");
 				}
-				throw new SimpleProcessProxyException($"Failed to write memory at {OpenedProcessHandle}+{objectAddress} with value {bytesToWrite}.");
+				throw new SimpleProcessProxyException($"Failed to write memory at {objectAddress} with value {bytesToWrite}. Last Win32Error code: {winError}");
 			}
 		}
 
@@ -271,15 +304,16 @@ namespace SimplifiedMemoryManager
 
 			if (!success || bytesRead != bytesToRead.Length)
 			{
-				if (!success)
+                var winError = Marshal.GetLastWin32Error();
+                if (!success)
 				{
-					throw new SimpleProcessProxyException("Failed to read from process memory.");
+					throw new SimpleProcessProxyException($"Failed to read from process memory. Last Win32Error code: {winError}");
 				}
 				if (bytesRead != bytesToRead.Length)
 				{
-					throw new SimpleProcessProxyException($"Expected to read {bytesToRead.Length}, but we actually read {bytesRead}");
+					throw new SimpleProcessProxyException($"Expected to read {bytesToRead.Length}, but we actually read {bytesRead}. Last Win32Error code: {winError}");
 				}
-				throw new SimpleProcessProxyException($"Failed to read value at {OpenedProcessHandle}+{objectAddress}.");
+				throw new SimpleProcessProxyException($"Failed to read value at {objectAddress}. Last Win32Error code: {winError}");
 			}
 
 			return bytesToRead;
@@ -295,253 +329,310 @@ namespace SimplifiedMemoryManager
 		/// If the attempt to invert the boolean fails, an exception is thrown.
 		/// </summary>
 		/// <param name="memoryOffset">The offset, from index 0 of the proxied process' memory, that holds the boolean you want to invert.</param>
-		/// <param name="booleanSize">If your process stores booleans with more than 1 byte, specify the byte-size here.</param>
-		/// <exception cref="SimpleProcessProxyException"></exception>
+		/// <param name="booleanSize">Specify the byte-size of the boolean, if greater than 1.</param>
+		/// <param name="forceWritability">Attempt to force-write change.</param>
+		/// <exception cref="SimpleProcessProxyException">An operation the SPP was responsible for failed.</exception>
+		/// <exception cref="SimpleProcessProxyAggregateException">An operation outside of the SPP's responsibility failed.</exception>
 		public void InvertBooleanValue(IntPtr memoryOffset, int booleanSize = 1, bool forceWritability = false)
 		{
-			byte[] currentValue = GetMemory(memoryOffset, booleanSize);
-
 			byte[] valueToWrite = new byte[booleanSize];
 
-			if (Enumerable.SequenceEqual(currentValue, BitConverter.GetBytes(true)))
+            try
 			{
-				BitConverter.GetBytes(false).CopyTo(valueToWrite, 0);
-			}
-			else
-			{
-				BitConverter.GetBytes(true).CopyTo(valueToWrite, 0);
-			}
+				byte[] currentValue = GetMemoryWithinMainModule(memoryOffset, booleanSize);
 
-			try
-			{
-				SetMemory(memoryOffset, valueToWrite, forceWritability);
-			}
-			catch (Exception e)
-			{
-				throw new SimpleProcessProxyException($"Failed to write boolean value at {OpenedProcessHandle}+{memoryOffset}", e);
-			}
-		}
-
-		#region ModifyProcessOffset methods
-		/// <summary>
-		/// Opens the proxied process and attempts to modify its memory at the designated offset with the provided value.
-		/// 
-		/// If the attempt to modify memory fails, an exception is thrown.
-		/// </summary>
-		/// <param name="memoryOffset">Where in the proxied process' memory to begin the modification.</param>
-		/// <param name="offsetValueToWrite">Value to set in memory, beginning at the memoryOffset and extending for the byte-length of the value.</param>
-		/// <exception cref="SimpleProcessProxyException"></exception>
-		public void ModifyProcessOffset(IntPtr memoryOffset, short offsetValueToWrite, bool forceWritability = false)
-		{
-			try
-			{
-				SetMemory(memoryOffset, BitConverter.GetBytes(offsetValueToWrite), forceWritability);
+				if (Enumerable.SequenceEqual(currentValue, BitConverter.GetBytes(true)))
+				{
+					BitConverter.GetBytes(false).CopyTo(valueToWrite, 0);
+				}
+				else
+				{
+					BitConverter.GetBytes(true).CopyTo(valueToWrite, 0);
+				}
 			}
 			catch(Exception e)
 			{
-				throw new SimpleProcessProxyException($"Failed to write int value at {OpenedProcessHandle}+{memoryOffset}", e);
+				throw new SimpleProcessProxyAggregateException($"Failed to retrieve boolean value at {ProcessBaseAddress}+{memoryOffset}", e);
 			}
-		}
 
-		/// <summary>
-		/// Opens the proxied process and attempts to modify its memory at the designated offset with the provided value.
-		/// 
-		/// If the attempt to modify memory fails, an exception is thrown.
-		/// </summary>
-		/// <param name="memoryOffset">Where in the proxied process' memory to begin the modification.</param>
-		/// <param name="offsetValueToWrite">Value to set in memory, beginning at the memoryOffset and extending for the byte-length of the value.</param>
-		/// <exception cref="SimpleProcessProxyException"></exception>
-		public void ModifyProcessOffset(IntPtr memoryOffset, int offsetValueToWrite, bool forceWritability = false)
-		{
 			try
 			{
-				SetMemory(memoryOffset, BitConverter.GetBytes(offsetValueToWrite), forceWritability);
+				SetMemoryWithinMainModule(memoryOffset, valueToWrite, forceWritability);
 			}
 			catch (Exception e)
 			{
-				throw new SimpleProcessProxyException($"Failed to write int value at {OpenedProcessHandle}+{memoryOffset}", e);
+				throw new SimpleProcessProxyAggregateException($"Failed to write boolean value at {ProcessBaseAddress}+{memoryOffset}", e);
 			}
 		}
 
-		/// <summary>
-		/// Opens the proxied process and attempts to modify its memory at the designated offset with the provided value.
-		/// 
-		/// If the attempt to modify memory fails, an exception is thrown.
-		/// </summary>
-		/// <param name="memoryOffset">Where in the proxied process' memory to begin the modification.</param>
-		/// <param name="offsetValueToWrite">Value to set in memory, beginning at the memoryOffset and extending for the byte-length of the value.</param>
-		/// <exception cref="SimpleProcessProxyException"></exception>
-		public void ModifyProcessOffset(IntPtr memoryOffset, long offsetValueToWrite, bool forceWritability = false)
+        #region ModifyProcessOffset methods
+        /// <summary>
+        /// Opens the proxied process and attempts to modify its memory at the designated offset with the provided value.
+        /// 
+        /// If the attempt to modify memory fails, an exception is thrown.
+        /// </summary>
+        /// <param name="memoryOffset">Where in the proxied process' memory to begin the modification.</param>
+        /// <param name="offsetValueToWrite">Value to set in memory, beginning at the memoryOffset and extending for the byte-length of the value.</param>
+        /// <param name="forceWritability">Attempt to force-write change.</param>
+        /// <exception cref="SimpleProcessProxyException">An operation the SPP was responsible for failed.</exception>
+        /// <exception cref="SimpleProcessProxyAggregateException">An operation outside of the SPP's responsibility failed.</exception>
+        public void ModifyProcessOffset(IntPtr memoryOffset, short offsetValueToWrite, bool forceWritability = false)
 		{
 			try
 			{
-				SetMemory(memoryOffset, BitConverter.GetBytes(offsetValueToWrite), forceWritability);
-			}
-			catch (Exception e)
-			{
-				throw new SimpleProcessProxyException($"Failed to write int value at {OpenedProcessHandle}+{memoryOffset}", e);
-			}
-		}
-
-		/// <summary>
-		/// Opens the proxied process and attempts to modify its memory at the designated offset with the provided value.
-		/// 
-		/// If the attempt to modify memory fails, an exception is thrown.
-		/// </summary>
-		/// <param name="memoryOffset">Where in the proxied process' memory to begin the modification.</param>
-		/// <param name="offsetValueToWrite">Value to set in memory, beginning at the memoryOffset and extending for the byte-length of the value.</param>
-		/// <exception cref="SimpleProcessProxyException"></exception>
-		public void ModifyProcessOffset(IntPtr memoryOffset, double offsetValueToWrite, bool forceWritability = false)
-		{
-			try
-			{
-				SetMemory(memoryOffset, BitConverter.GetBytes(offsetValueToWrite), forceWritability);
-			}
-			catch (Exception e)
-			{
-				throw new SimpleProcessProxyException($"Failed to write int value at {OpenedProcessHandle}+{memoryOffset}", e);
-			}
-		}
-
-		/// <summary>
-		/// Opens the proxied process and attempts to modify its memory at the designated offset with the provided value.
-		/// 
-		/// If the attempt to modify memory fails, an exception is thrown.
-		/// </summary>
-		/// <param name="memoryOffset">Where in the proxied process' memory to begin the modification.</param>
-		/// <param name="offsetValueToWrite">Value to set in memory, beginning at the memoryOffset and extending for the byte-length of the value.</param>
-		/// <exception cref="SimpleProcessProxyException"></exception>
-		public void ModifyProcessOffset(IntPtr memoryOffset, float offsetValueToWrite, bool forceWritability = false)
-		{
-			try
-			{
-				SetMemory(memoryOffset, BitConverter.GetBytes(offsetValueToWrite), forceWritability);
-			}
-			catch (Exception e)
-			{
-				throw new SimpleProcessProxyException($"Failed to write int value at {OpenedProcessHandle}+{memoryOffset}", e);
-			}
-		}
-
-		/// <summary>
-		/// Opens the proxied process and attempts to modify its memory at the designated offset with the provided value.
-		/// 
-		/// If the attempt to modify memory fails, an exception is thrown.
-		/// </summary>
-		/// <param name="memoryOffset">Where in the proxied process' memory to begin the modification.</param>
-		/// <param name="offsetValueToWrite">Value to set in memory, beginning at the memoryOffset and extending for the byte-length of the value.</param>
-		/// <exception cref="SimpleProcessProxyException"></exception>
-		public void ModifyProcessOffset(IntPtr memoryOffset, bool offsetValueToWrite, bool forceWritability = false)
-		{
-			try
-			{
-				SetMemory(memoryOffset, BitConverter.GetBytes(offsetValueToWrite), forceWritability);
-			}
-			catch (Exception e)
-			{
-				throw new SimpleProcessProxyException($"Failed to write int value at {OpenedProcessHandle}+{memoryOffset}", e);
-			}
-		}
-
-		/// <summary>
-		/// Opens the proxied process and attempts to modify its memory at the designated offset with the provided value.
-		/// 
-		/// If the attempt to modify memory fails, an exception is thrown.
-		/// </summary>
-		/// <param name="memoryOffset">Where in the proxied process' memory to begin the modification.</param>
-		/// <param name="offsetValueToWrite">Value to set in memory, beginning at the memoryOffset and extending for the byte-length of the value.</param>
-		/// <exception cref="SimpleProcessProxyException"></exception>
-		public void ModifyProcessOffset(IntPtr memoryOffset, char offsetValueToWrite, bool forceWritability = false)
-		{
-			try
-			{
-				SetMemory(memoryOffset, BitConverter.GetBytes(offsetValueToWrite), forceWritability);
-			}
-			catch (Exception e)
-			{
-				throw new SimpleProcessProxyException($"Failed to write int value at {OpenedProcessHandle}+{memoryOffset}", e);
-			}
-		}
-
-		/// <summary>
-		/// Opens the proxied process and attempts to modify its memory at the designated offset with the provided value.
-		/// 
-		/// If the attempt to modify memory fails, an exception is thrown.
-		/// </summary>
-		/// <param name="memoryOffset">Where in the proxied process' memory to begin the modification.</param>
-		/// <param name="offsetValueToWrite">Value to set in memory, beginning at the memoryOffset and extending for the byte-length of the value.</param>
-		/// <exception cref="SimpleProcessProxyException"></exception>
-		public void ModifyProcessOffset(IntPtr memoryOffset, byte[] offsetValueToWrite, bool forceWritability = false)
-		{
-			try
-			{
-				SetMemory(memoryOffset, offsetValueToWrite, forceWritability);
+				SetMemoryWithinMainModule(memoryOffset, BitConverter.GetBytes(offsetValueToWrite), forceWritability);
 			}
 			catch(Exception e)
 			{
-				throw new SimpleProcessProxyException($"Failed to write int value at {OpenedProcessHandle}+{memoryOffset}", e);
+				throw new SimpleProcessProxyAggregateException($"Failed to write short at {ProcessBaseAddress}+{memoryOffset}", e);
 			}
 		}
 
-		/// <summary>
-		/// Opens the proxied process and attempts to modify its memory at the designated offset with the provided value.
-		/// 
-		/// If the attempt to modify memory fails, an exception is thrown.
-		/// </summary>
-		/// <param name="memoryOffset">Where in the proxied process' memory to begin the modification.</param>
-		/// <param name="offsetValueToWrite">Value to set in memory, beginning at the memoryOffset and extending for the byte-length of the value.</param>
-		/// <exception cref="SimpleProcessProxyException"></exception>
-		public void ModifyProcessOffset(IntPtr memoryOffset, string offsetValueToWrite, bool forceWritability = false)
+        /// <summary>
+        /// Opens the proxied process and attempts to modify its memory at the designated offset with the provided value.
+        /// 
+        /// If the attempt to modify memory fails, an exception is thrown.
+        /// </summary>
+        /// <param name="memoryOffset">Where in the proxied process' memory to begin the modification.</param>
+        /// <param name="offsetValueToWrite">Value to set in memory, beginning at the memoryOffset and extending for the byte-length of the value.</param>
+        /// <param name="forceWritability">Attempt to force-write change.</param>
+        /// <exception cref="SimpleProcessProxyException">An operation the SPP was responsible for failed.</exception>
+        /// <exception cref="SimpleProcessProxyAggregateException">An operation outside of the SPP's responsibility failed.</exception>
+        public void ModifyProcessOffset(IntPtr memoryOffset, int offsetValueToWrite, bool forceWritability = false)
 		{
 			try
 			{
-				SetMemory(memoryOffset, Encoding.Default.GetBytes(offsetValueToWrite), forceWritability);
+				SetMemoryWithinMainModule(memoryOffset, BitConverter.GetBytes(offsetValueToWrite), forceWritability);
 			}
 			catch (Exception e)
 			{
-				throw new SimpleProcessProxyException($"Failed to write int value at {OpenedProcessHandle}+{memoryOffset}", e);
+				throw new SimpleProcessProxyAggregateException($"Failed to write int at {ProcessBaseAddress}+{memoryOffset}", e);
 			}
 		}
-		#endregion
 
-		/// <summary>
-		/// Reads the proxied process' memory at the given offset for the supplied quantity of bytes.
-		/// 
-		/// If the attempt to read memory fails, an exception is thrown.
-		/// </summary>
-		/// <param name="memoryOffset">Where in the proxied process' memory to begin reading from.</param>
-		/// <param name="bytesToRead">Amount of bytes to read in and return.</param>
-		/// <returns>The bytes found at the provided offset within the proxied process.</returns>
-		/// <exception cref="SimpleProcessProxyException"></exception>
-		public byte[] ReadProcessOffset(IntPtr memoryOffset, long bytesToRead)
+        /// <summary>
+        /// Opens the proxied process and attempts to modify its memory at the designated offset with the provided value.
+        /// 
+        /// If the attempt to modify memory fails, an exception is thrown.
+        /// </summary>
+        /// <param name="memoryOffset">Where in the proxied process' memory to begin the modification.</param>
+        /// <param name="offsetValueToWrite">Value to set in memory, beginning at the memoryOffset and extending for the byte-length of the value.</param>
+        /// <param name="forceWritability">Attempt to force-write change.</param>
+        /// <exception cref="SimpleProcessProxyException">An operation the SPP was responsible for failed.</exception>
+        /// <exception cref="SimpleProcessProxyAggregateException">An operation outside of the SPP's responsibility failed.</exception>
+        public void ModifyProcessOffset(IntPtr memoryOffset, long offsetValueToWrite, bool forceWritability = false)
 		{
 			try
 			{
-				return GetMemory(memoryOffset, bytesToRead);
+				SetMemoryWithinMainModule(memoryOffset, BitConverter.GetBytes(offsetValueToWrite), forceWritability);
 			}
-			catch(Exception e)
+			catch (Exception e)
 			{
-				throw new SimpleProcessProxyException($"Failed to read value at {OpenedProcessHandle}+{memoryOffset}", e);
+				throw new SimpleProcessProxyAggregateException($"Failed to write long at {ProcessBaseAddress}+{memoryOffset}", e);
 			}
 		}
 
-		/// <summary>
-		/// Takes a snapshot of the proxied process' memory at the current moment in time.
-		/// </summary>
-		/// <returns>Array of bytes containing the proxied process' current memory.</returns>
-		/// <exception cref="SimpleProcessProxyException"></exception>
-		public byte[] GetProcessSnapshot()
+        /// <summary>
+        /// Opens the proxied process and attempts to modify its memory at the designated offset with the provided value.
+        /// 
+        /// If the attempt to modify memory fails, an exception is thrown.
+        /// </summary>
+        /// <param name="memoryOffset">Where in the proxied process' memory to begin the modification.</param>
+        /// <param name="offsetValueToWrite">Value to set in memory, beginning at the memoryOffset and extending for the byte-length of the value.</param>
+        /// <param name="forceWritability">Attempt to force-write change.</param>
+        /// <exception cref="SimpleProcessProxyException">An operation the SPP was responsible for failed.</exception>
+        /// <exception cref="SimpleProcessProxyAggregateException">An operation outside of the SPP's responsibility failed.</exception>
+        public void ModifyProcessOffset(IntPtr memoryOffset, double offsetValueToWrite, bool forceWritability = false)
+		{
+			try
+			{
+				SetMemoryWithinMainModule(memoryOffset, BitConverter.GetBytes(offsetValueToWrite), forceWritability);
+			}
+			catch (Exception e)
+			{
+				throw new SimpleProcessProxyAggregateException($"Failed to write double at {ProcessBaseAddress}+{memoryOffset}", e);
+			}
+		}
+
+        /// <summary>
+        /// Opens the proxied process and attempts to modify its memory at the designated offset with the provided value.
+        /// 
+        /// If the attempt to modify memory fails, an exception is thrown.
+        /// </summary>
+        /// <param name="memoryOffset">Where in the proxied process' memory to begin the modification.</param>
+        /// <param name="offsetValueToWrite">Value to set in memory, beginning at the memoryOffset and extending for the byte-length of the value.</param>
+        /// <param name="forceWritability">Attempt to force-write change.</param>
+        /// <exception cref="SimpleProcessProxyException">An operation the SPP was responsible for failed.</exception>
+        /// <exception cref="SimpleProcessProxyAggregateException">An operation outside of the SPP's responsibility failed.</exception>
+        public void ModifyProcessOffset(IntPtr memoryOffset, float offsetValueToWrite, bool forceWritability = false)
+		{
+			try
+			{
+				SetMemoryWithinMainModule(memoryOffset, BitConverter.GetBytes(offsetValueToWrite), forceWritability);
+			}
+			catch (Exception e)
+			{
+				throw new SimpleProcessProxyAggregateException($"Failed to write float at {ProcessBaseAddress}+{memoryOffset}", e);
+			}
+		}
+
+        /// <summary>
+        /// Opens the proxied process and attempts to modify its memory at the designated offset with the provided value.
+        /// 
+        /// If the attempt to modify memory fails, an exception is thrown.
+        /// </summary>
+        /// <param name="memoryOffset">Where in the proxied process' memory to begin the modification.</param>
+        /// <param name="offsetValueToWrite">Value to set in memory, beginning at the memoryOffset and extending for the byte-length of the value.</param>
+        /// <param name="forceWritability">Attempt to force-write change.</param>
+        /// <exception cref="SimpleProcessProxyException">An operation the SPP was responsible for failed.</exception>
+        /// <exception cref="SimpleProcessProxyAggregateException">An operation outside of the SPP's responsibility failed.</exception>
+        public void ModifyProcessOffset(IntPtr memoryOffset, bool offsetValueToWrite, bool forceWritability = false)
+		{
+			try
+			{
+				SetMemoryWithinMainModule(memoryOffset, BitConverter.GetBytes(offsetValueToWrite), forceWritability);
+			}
+			catch (Exception e)
+			{
+				throw new SimpleProcessProxyAggregateException($"Failed to write bool at {ProcessBaseAddress}+{memoryOffset}", e);
+			}
+		}
+
+        /// <summary>
+        /// Opens the proxied process and attempts to modify its memory at the designated offset with the provided value.
+        /// 
+        /// If the attempt to modify memory fails, an exception is thrown.
+        /// </summary>
+        /// <param name="memoryOffset">Where in the proxied process' memory to begin the modification.</param>
+        /// <param name="offsetValueToWrite">Value to set in memory, beginning at the memoryOffset and extending for the byte-length of the value.</param>
+        /// <param name="forceWritability">Attempt to force-write change.</param>
+        /// <exception cref="SimpleProcessProxyException">An operation the SPP was responsible for failed.</exception>
+        /// <exception cref="SimpleProcessProxyAggregateException">An operation outside of the SPP's responsibility failed.</exception>
+        public void ModifyProcessOffset(IntPtr memoryOffset, char offsetValueToWrite, bool forceWritability = false)
+		{
+			try
+			{
+				SetMemoryWithinMainModule(memoryOffset, BitConverter.GetBytes(offsetValueToWrite), forceWritability);
+			}
+			catch (Exception e)
+			{
+				throw new SimpleProcessProxyAggregateException($"Failed to write char at {ProcessBaseAddress}+{memoryOffset}", e);
+			}
+		}
+
+        /// <summary>
+        /// Opens the proxied process and attempts to modify its memory at the designated offset with the provided value.
+        /// 
+        /// If the attempt to modify memory fails, an exception is thrown.
+        /// </summary>
+        /// <param name="memoryOffset">Where in the proxied process' memory to begin the modification.</param>
+        /// <param name="offsetValueToWrite">Value to set in memory, beginning at the memoryOffset and extending for the byte-length of the value.</param>
+        /// <param name="forceWritability">Attempt to force-write change.</param>
+        /// <exception cref="SimpleProcessProxyException">An operation the SPP was responsible for failed.</exception>
+        /// <exception cref="SimpleProcessProxyAggregateException">An operation outside of the SPP's responsibility failed.</exception>
+        public void ModifyProcessOffset(IntPtr memoryOffset, byte[] offsetValueToWrite, bool forceWritability = false)
+		{
+			try
+			{
+				SetMemoryWithinMainModule(memoryOffset, offsetValueToWrite, forceWritability);
+			}
+			catch(Exception e)
+			{
+				throw new SimpleProcessProxyAggregateException($"Failed to write byte array at {ProcessBaseAddress}+{memoryOffset}", e);
+			}
+		}
+
+        /// <summary>
+        /// Opens the proxied process and attempts to modify its memory at the designated offset with the provided value.
+        /// 
+        /// If the attempt to modify memory fails, an exception is thrown.
+        /// </summary>
+        /// <param name="memoryOffset">Where in the proxied process' memory to begin the modification.</param>
+        /// <param name="offsetValueToWrite">Value to set in memory, beginning at the memoryOffset and extending for the byte-length of the value.</param>
+        /// <param name="forceWritability">Attempt to force-write change.</param>
+        /// <exception cref="SimpleProcessProxyException">An operation the SPP was responsible for failed.</exception>
+        /// <exception cref="SimpleProcessProxyAggregateException">An operation outside of the SPP's responsibility failed.</exception>
+        public void ModifyProcessOffset(IntPtr memoryOffset, string offsetValueToWrite, bool forceWritability = false)
+		{
+			try
+			{
+				SetMemoryWithinMainModule(memoryOffset, Encoding.Default.GetBytes(offsetValueToWrite), forceWritability);
+			}
+			catch (Exception e)
+			{
+				throw new SimpleProcessProxyAggregateException($"Failed to write string at {ProcessBaseAddress}+{memoryOffset}", e);
+			}
+		}
+        #endregion
+
+        /// <summary>
+        /// Reads the proxied process' memory at the given offset for the supplied quantity of bytes.
+        /// 
+        /// If the attempt to read memory fails, an exception is thrown.
+        /// </summary>
+        /// <param name="memoryOffset">Where in the proxied process' memory to begin reading from.</param>
+        /// <param name="bytesToRead">Amount of bytes to read in and return.</param>
+        /// <returns>The bytes found at the provided offset within the proxied process.</returns>
+        /// <exception cref="SimpleProcessProxyException">An operation the SPP was responsible for failed.</exception>
+        /// <exception cref="SimpleProcessProxyAggregateException">An operation outside of the SPP's responsibility failed.</exception>
+        public byte[] ReadProcessOffset(IntPtr memoryOffset, long bytesToRead)
+		{
+			try
+			{
+				return GetMemoryWithinMainModule(memoryOffset, bytesToRead);
+			}
+			catch(Exception e)
+			{
+				throw new SimpleProcessProxyAggregateException($"Failed to read value at {ProcessBaseAddress}+{memoryOffset}", e);
+			}
+		}
+
+        /// <summary>
+        /// Takes a snapshot of the proxied process' memory at the current moment in time.
+        /// </summary>
+        /// <returns>Array of bytes containing the proxied process' current memory.</returns>
+        /// <exception cref="SimpleProcessProxyException">An operation the SPP was responsible for failed.</exception>
+        /// <exception cref="SimpleProcessProxyAggregateException">An operation outside of the SPP's responsibility failed.</exception>
+        public byte[] GetProcessSnapshot()
 		{
 			try
 			{                
-				return GetProcessSnapshot(ProcessToProxy.PeakPagedMemorySize64);
+				return GetProcessSnapshot(ProcessToProxy.MainModule.ModuleMemorySize);
 			}
 			catch(Exception e)
 			{
-				throw new SimpleProcessProxyException($"Failed to get full-state of process", e);
+				throw new SimpleProcessProxyAggregateException($"Failed to get process snapshot", e);
 			}
 		}
 
+        /// <summary>
+        /// Takes a snapshot of the proxied process' memory at the current moment in time.
+        /// </summary>
+        /// <returns>Array of bytes containing the proxied process' current memory.</returns>
+        /// <exception cref="SimpleProcessProxyException">An operation the SPP was responsible for failed.</exception>
+        /// <exception cref="SimpleProcessProxyAggregateException">An operation outside of the SPP's responsibility failed.</exception>
+        public byte[] GetFullProcessMemorySnapshot()
+        {
+			//TODO: implement
+			throw new NotImplementedException();
+            try
+            {
+                return GetProcessSnapshot(ProcessToProxy.MainModule.ModuleMemorySize);
+            }
+            catch (Exception e)
+            {
+                throw new SimpleProcessProxyAggregateException($"Failed to get full-state of process", e);
+            }
+        }
+
+		/// <summary>
+		/// Scans either all of the process' related memory, or a specific array of memory if provided, for a
+		/// specified pattern of memory.
+		/// </summary>
+		/// <param name="pattern">A user-friendly representation of memory to scan for.</param>
+		/// <param name="memoryToScan">Optional array of bytes that represents a block of memory to scan.</param>
+		/// <returns>An IntPtr representing the exact location of the first instance of the pattern in memory.</returns>
+		/// <exception cref="SimpleProcessProxyException">Thrown if the provided pattern was not found in memory.</exception>
         public IntPtr ScanMemoryForUniquePattern(SimplePattern pattern, byte[] memoryToScan = null)
         {
             List<IntPtr> results = new List<IntPtr>();
@@ -574,11 +665,19 @@ namespace SimplifiedMemoryManager
             return scanManager.ScanResult.First();
         }
 
+		/// <summary>
+		/// Interprets the provided IntPtr as a pointer(size specified by sizeOfPointer, defaulting to 8 bytes),
+		/// and returns an IntPtr that represents the location of memory pointed to(NOT the value pointed to).
+		/// </summary>
+		/// <param name="pointer">Offset from ProcessBaseAddress where the desired pointer begins.</param>
+		/// <param name="bigEndian">Endianness of the process being proxied.</param>
+		/// <param name="sizeOfPointer">Size of the pointer being provided, defaulting to 8 bytes.</param>
+		/// <returns>The memory address being pointed to by the provided offset pointer.</returns>
 		public IntPtr FollowPointer(IntPtr pointer, bool bigEndian, int sizeOfPointer = 8)
 		{
 			try
 			{
-				OpenProcess();
+				ProxyProcess();
 
 				byte[] memoryPointedTo = new byte[sizeOfPointer];
 				ReadBytesFromMemory(new IntPtr(ProcessBaseAddress.ToInt64() + pointer.ToInt64()), memoryPointedTo);
@@ -618,14 +717,25 @@ namespace SimplifiedMemoryManager
             }
         }
 
-		public byte[] GetMemoryFromPointer(IntPtr pointer, int size)
+		/// <summary>
+		/// Gets the content of the addressed memory, if the process being proxied has permission to access it.
+		/// </summary>
+		/// <param name="memoryLocation">Memory address you wish to read.</param>
+		/// <param name="size">Amount of bytes you want to read from provided memory address.</param>
+		/// <returns>Memory contents stored at the provided location and size.</returns>
+		public byte[] GetMemoryFromAbsoluteLocation(IntPtr memoryLocation, int size)
 		{
-			return GetMemoryOutsideMainModule(pointer, size);
+			return GetMemoryOutsideMainModule(memoryLocation, size);
 		}
 
-		public void SetMemoryAtPointer(IntPtr pointer, byte[] data)
+		/// <summary>
+		/// Sets the content of the addressed memory, if the process being proxied has permission to access it.
+		/// </summary>
+		/// <param name="memoryLocation">Memory address you wish to modify.</param>
+		/// <param name="data">byte-representation of the data you wish to set at the provided address.</param>
+		public void SetMemoryAtPointer(IntPtr memoryLocation, byte[] data)
 		{
-			SetMemoryOutsideMainModule(pointer, data);
+			SetMemoryOutsideMainModule(memoryLocation, data);
 		}
 
         /// <summary>

@@ -82,10 +82,10 @@ namespace SimplifiedMemoryManager
         [DllImport("kernel32.dll", SetLastError = true)]
         public static extern bool ReadProcessMemory(IntPtr hProcess, IntPtr lpBaseAddress, out short lpBuffer, uint size, out int lpNumberOfBytesRead);
         // and with bytes
-        [DllImport("kernel32.dll")]
+        [DllImport("kernel32.dll", SetLastError = true)]
         public static extern bool ReadProcessMemory(IntPtr hProcess, IntPtr lpBaseAddress, byte[] lpBuffer, uint nSize, out int lpNumberOfBytesRead);
         // and long bytes
-        [DllImport("kernel32.dll")]
+        [DllImport("kernel32.dll", SetLastError = true)]
         public static extern bool ReadProcessMemory(IntPtr hProcess, IntPtr lpBaseAddress, byte[] lpBuffer, long nSize, out long lpNumberOfBytesRead);
 
         // Declare CloseHandle
@@ -98,7 +98,7 @@ namespace SimplifiedMemoryManager
         [DllImport("kernel32.dll", SetLastError = true)]
         public static extern bool VirtualProtectEx(IntPtr hProcess, IntPtr lpBaseAddress, long dwSize, uint flNewProtect, out uint lpflOldProtect);
 
-        [DllImport("kernel32.dll")]
+        [DllImport("kernel32.dll", SetLastError = true)]
         public static extern void GetSystemInfo(out SYSTEM_INFO lpSystemInfo);
 
         [DllImport("kernel32.dll", SetLastError = true)]
