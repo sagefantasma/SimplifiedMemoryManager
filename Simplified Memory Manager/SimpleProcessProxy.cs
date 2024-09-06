@@ -17,23 +17,34 @@ namespace SimplifiedMemoryManager
 		#region Internals
 		private bool disposedValue;
 
-		public static Process ProcessToProxy { get; set; }
+		public static int ProcessIdToProxy { get; set; }
+		public static object ProcessLocker { get; set; } = new object();
 		private static string ProcessName { get; set; }
 		private static IntPtr ProcessBaseAddress { get; set; }
 		private static IntPtr OpenedProcessHandle { get; set; }
 
 		public SimpleProcessProxy(Process process)
 		{
-			ProcessToProxy = process ?? throw new SimpleProcessProxyException("You must provide a process to modify.");
+			ProcessIdToProxy = process?.Id ?? throw new SimpleProcessProxyException("You must provide a process to modify.");
 			ProcessBaseAddress = process.MainModule.BaseAddress;
 			ProcessName = process.ProcessName;
+		}
+
+		public SimpleProcessProxy(int processId)
+		{
+			ProcessIdToProxy = processId;
+			using (Process process = Process.GetProcessById(processId))
+			{
+				ProcessBaseAddress = process.MainModule.BaseAddress;
+				ProcessName = process.ProcessName;
+			}
 		}
 
 		private void ProxyProcess()
 		{
 			ValidateProcessToProxy();
 
-			OpenedProcessHandle = NativeMethods.OpenProcess(AccessPrivileges.AllAccess | AccessPrivileges.ProcessVMOperation, false, ProcessToProxy.Id);
+			OpenedProcessHandle = NativeMethods.OpenProcess(AccessPrivileges.AllAccess | AccessPrivileges.ProcessVMOperation, false, ProcessIdToProxy);
 
 			if(OpenedProcessHandle == null)
 			{
@@ -44,21 +55,20 @@ namespace SimplifiedMemoryManager
 
 		private void ValidateProcessToProxy()
 		{
-			if (ProcessToProxy == null || ProcessToProxy.HasExited)
+			try
 			{
-				try
+				using (Process proxiedProcess = Process.GetProcessById(ProcessIdToProxy))
 				{
-					ProcessToProxy = Process.GetProcessesByName(ProcessName).FirstOrDefault();
-					if (ProcessToProxy == default)
+					if (proxiedProcess == default)
 					{
 						throw new SimpleProcessProxyException($"Failed to find process {ProcessName} to proxy");
 					}
 				}
-				catch(Exception e)
-				{
-					throw new SimpleProcessProxyAggregateException("Something unexpected went wrong when validating the requested process proxy!", e);
-				}
-			}
+            }
+            catch (Exception e)
+            {
+                throw new SimpleProcessProxyAggregateException("Something unexpected went wrong when validating the requested process proxy!", e);
+            }
 		}
 
 		protected virtual void Dispose(bool disposing)
@@ -72,7 +82,7 @@ namespace SimplifiedMemoryManager
 
 				// TODO: free unmanaged resources (unmanaged objects) and override finalizer
 				ProcessName = null;
-				ProcessToProxy = null; //TODO: determine if this does what I want
+				ProcessIdToProxy = int.MinValue; 
 				// TODO: set large fields to null
 				disposedValue = true;
 			}
@@ -250,7 +260,7 @@ namespace SimplifiedMemoryManager
 		{
 			bool modificationSuccess;
 
-			lock (ProcessToProxy) 
+			lock (ProcessLocker) 
 			{
 				modificationSuccess = NativeMethods.VirtualProtectEx(OpenedProcessHandle, objectAddress, byteCount, AccessPrivileges.ExecuteReadWrite, out _);
 			}
@@ -266,7 +276,7 @@ namespace SimplifiedMemoryManager
 			Process.EnterDebugMode();
 			EnableDisablePrivilege("SeDebugPrivilege", true);
 
-            lock (ProcessToProxy)
+            lock (ProcessLocker)
 			{
 				modificationSuccess = NativeMethods.VirtualProtectEx(OpenedProcessHandle, objectAddress, byteCount, AccessPrivileges.ExecuteReadWrite, out _);
 			}
@@ -596,8 +606,9 @@ namespace SimplifiedMemoryManager
         public byte[] GetProcessSnapshot()
 		{
 			try
-			{                
-				return GetProcessSnapshot(ProcessToProxy.MainModule.ModuleMemorySize);
+			{
+				using (Process fullProcessProxy = Process.GetProcessById(ProcessIdToProxy))
+					return GetProcessSnapshot(fullProcessProxy.MainModule.ModuleMemorySize);
 			}
 			catch(Exception e)
 			{
@@ -617,7 +628,8 @@ namespace SimplifiedMemoryManager
 			throw new NotImplementedException();
             try
             {
-                return GetProcessSnapshot(ProcessToProxy.MainModule.ModuleMemorySize);
+				using (Process fullProcessProxy = Process.GetProcessById(ProcessIdToProxy))
+					return GetProcessSnapshot(fullProcessProxy.MainModule.ModuleMemorySize);
             }
             catch (Exception e)
             {
@@ -645,7 +657,7 @@ namespace SimplifiedMemoryManager
                 OpenedProcessHandle = default;
             }
 
-			lock (ProcessToProxy)
+			lock (ProcessLocker)
 			{
 				if (memoryToScan != null)
 				{
@@ -653,7 +665,8 @@ namespace SimplifiedMemoryManager
 				}
 				else
 				{
-					scanManager.FullProcessScan(pattern, ProcessToProxy, GetMemoryOutsideMainModule);
+					using (Process fullProcessProxy = Process.GetProcessById(ProcessIdToProxy))
+						scanManager.FullProcessScan(pattern, fullProcessProxy, GetMemoryOutsideMainModule);
 				}
 			}
 
@@ -766,7 +779,8 @@ namespace SimplifiedMemoryManager
 			}
             else
             {
-				scanManager.FullProcessScan(pattern, ProcessToProxy, GetMemoryOutsideMainModule);
+				using (Process fullProcessProxy = Process.GetProcessById(ProcessIdToProxy))
+					scanManager.FullProcessScan(pattern, fullProcessProxy, GetMemoryOutsideMainModule);
 			}
 			
 			if(scanManager.ScanResult.Count == 0)
