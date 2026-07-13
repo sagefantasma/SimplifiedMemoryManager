@@ -46,10 +46,18 @@ namespace SimplifiedMemoryManager
             MasterCancellationTokenSource.Cancel();
         }
 
-        private bool InitiateScan()
+        public bool InitiateScan()
         {
             IntPtr foundPosition = new IntPtr();
-
+            /*List<Thread> runningThreads = new List<Thread>();
+            foreach(ScanThread scanThread in ScanThreads)
+            {
+                ThreadStart threadStart = new ThreadStart(() => scanThread.ScanForPattern(ref foundPosition));
+                ThreadPool.SetMaxThreads((int) AvailableCores, 1);
+                Thread scanningThread = new Thread(() => scanThread.ScanForPattern(ref foundPosition));
+                scanningThread.Start();
+                runningThreads.Add(scanningThread);
+            }*/
             List<Task> runningThreads = new List<Task>();
             foreach (ScanThread scanThread in ScanThreads)
             {
@@ -70,7 +78,7 @@ namespace SimplifiedMemoryManager
 
             for (int i = 0; i < AvailableCores; i++)
             {
-                ScanThread scanThread = new ScanThread(pattern, MasterCancellationTokenSource.Token, PatternMatched, this);
+                ScanThread scanThread = new ScanThread(pattern, MasterCancellationTokenSource.Token, PatternMatched, this); //TODO: missing bufferPosition here?
 
                 int realBufferSize = Math.Min((int)BufferSizePerThread, memoryToScan.Length - bufferPosition);
                 scanThread.Data = new byte[realBufferSize];
@@ -79,11 +87,9 @@ namespace SimplifiedMemoryManager
 
                 bufferPosition += realBufferSize;
             }
-
-            InitiateScan();
         }
 
-        internal void FullProcessScan(SimplePattern pattern, Process processToProxy, Func<IntPtr, long, byte[]> GetMemory)
+        public void FullProcessScan(SimplePattern pattern, Process processToProxy, Func<IntPtr, long, byte[]> GetMemory)
         {
             foreach(ProcessModule module in processToProxy.Modules)
             {

@@ -63,7 +63,7 @@ public class SimpleProcessProxyTest
             }
 
             //Assert
-            Assert.Throws<SimpleProcessProxyException>(impossibleRead);
+            Assert.Throws<SimpleProcessProxyAggregateException>(impossibleRead);
         }
     }
 }

@@ -1,10 +1,13 @@
 ﻿using Microsoft.Win32.SafeHandles;
 using System;
 using System.Runtime.InteropServices;
+using System.Runtime.Versioning;
 using System.Security.Principal;
 
 namespace SimplifiedMemoryManager
 {
+    // ── Access flag constants ──────────────────────────────────────────────────
+    // Unchanged from original — kept here so callers don't need updating.
     public static class AccessPrivileges
     {
         public const int AllAccess = 0x1FFFFF;
@@ -16,13 +19,16 @@ namespace SimplifiedMemoryManager
         public const int PROCESS_WM_READ = 0x0010;
     }
 
+    // ── Windows structs ────────────────────────────────────────────────────────
+    // These are Windows-specific; they live here alongside the P/Invoke calls.
+
     public struct SYSTEM_INFO
     {
         public ushort processorArchitecture;
         ushort reserved;
         public uint pageSize;
-        public IntPtr minimumApplicationAddress;  // minimum address
-        public IntPtr maximumApplicationAddress;  // maximum address
+        public IntPtr minimumApplicationAddress;
+        public IntPtr maximumApplicationAddress;
         public IntPtr activeProcessorMask;
         public uint numberOfProcessors;
         public uint processorType;
@@ -58,37 +64,34 @@ namespace SimplifiedMemoryManager
         public int AllocationBase;
         public int AllocationProtect;
         public uint __alignment1;
-        public int RegionSize;   // size of the region allocated by the program
-        public int State;   // check if allocated (MEM_COMMIT)
-        public int Protect; // page protection (must be PAGE_READWRITE)
+        public int RegionSize;
+        public int State;
+        public int Protect;
         public int lType;
         public uint __alignment2;
     }
 
+    // ── P/Invoke declarations ──────────────────────────────────────────────────
     internal static class NativeMethods
     {
-        // Declare OpenProcess
         [DllImport("kernel32.dll", SetLastError = true)]
         public static extern IntPtr OpenProcess(int dwDesiredAccess, bool bInheritHandle, int dwProcessId);
 
-        // Declare WriteProcessMemory with short
         [DllImport("kernel32.dll", SetLastError = true)]
         public static extern bool WriteProcessMemory(IntPtr hProcess, IntPtr lpBaseAddress, ref short lpBuffer, uint nSize, out int lpNumberOfBytesWritten);
-        // and with bytes
+
         [DllImport("kernel32.dll", SetLastError = true)]
         public static extern bool WriteProcessMemory(IntPtr hProcess, IntPtr lpBaseAddress, byte[] lpBuffer, uint nSize, out int lpNumberOfBytesWritten);
 
-        // Declare ReadProcessMemory
         [DllImport("kernel32.dll", SetLastError = true)]
         public static extern bool ReadProcessMemory(IntPtr hProcess, IntPtr lpBaseAddress, out short lpBuffer, uint size, out int lpNumberOfBytesRead);
-        // and with bytes
+
         [DllImport("kernel32.dll", SetLastError = true)]
         public static extern bool ReadProcessMemory(IntPtr hProcess, IntPtr lpBaseAddress, byte[] lpBuffer, uint nSize, out int lpNumberOfBytesRead);
-        // and long bytes
+
         [DllImport("kernel32.dll", SetLastError = true)]
         public static extern bool ReadProcessMemory(IntPtr hProcess, IntPtr lpBaseAddress, byte[] lpBuffer, long nSize, out long lpNumberOfBytesRead);
 
-        // Declare CloseHandle
         [DllImport("kernel32.dll", SetLastError = true)]
         public static extern bool CloseHandle(IntPtr hObject);
 
