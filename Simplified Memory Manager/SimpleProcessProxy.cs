@@ -13,6 +13,18 @@ namespace SimplifiedMemoryManager
 {
     public class SimpleProcessProxy : IDisposable
     {
+        public class SimpleMemory
+        {
+            public IntPtr ExactAddress { get; set; }
+            public IntPtr OffsetAddress { get; set; }
+
+            public SimpleMemory(IntPtr exactAddress, IntPtr baseAddress)        
+            {
+                ExactAddress = exactAddress;
+                OffsetAddress = new IntPtr(exactAddress.ToInt64() - baseAddress.ToInt64());
+            }
+        }
+
         #region Internals
         private bool _disposedValue;
 
@@ -344,9 +356,9 @@ namespace SimplifiedMemoryManager
         /// </summary>
         /// <param name="pattern"></param>
         /// <param name="memoryToScan"></param>
-        /// <returns>IntPtr representing the ABSOLUTE(not relative!) memory location of the data, if found.</returns>
+        /// <returns>SimpleMemory obj representing the memory locations of the data, if found.</returns>
         /// <exception cref="SimpleProcessProxyException"></exception>
-        public IntPtr ScanMemoryForUniquePattern(SimplePattern pattern, byte[] memoryToScan = null)
+        public SimpleMemory ScanMemoryForUniquePattern(SimplePattern pattern, byte[] memoryToScan = null)
         {
             ScanManager scanManager = new ScanManager();
             //_platform.Close();
@@ -373,7 +385,7 @@ namespace SimplifiedMemoryManager
                             List<IntPtr> found = LinuxRegionScan(pattern, regions);
                             return found.Count == 0
                                 ? throw new SimpleProcessProxyException("Pattern not found in process memory.")
-                                : found[0];
+                                : new SimpleMemory(found[0], ProcessBaseAddress);
                         }
                     }
                 }
@@ -381,7 +393,7 @@ namespace SimplifiedMemoryManager
 
             return scanManager.ScanResult.Count == 0 
                 ? throw new SimpleProcessProxyException("Pattern not found in process memory.") 
-                : scanManager.ScanResult.First();
+                : new SimpleMemory(scanManager.ScanResult.First(), ProcessBaseAddress);
         }
         
         public IntPtr FollowPointer(IntPtr pointer, bool bigEndian, int sizeOfPointer = 8)
@@ -433,9 +445,9 @@ namespace SimplifiedMemoryManager
         /// <param name="pattern"></param>
         /// <param name="memoryToScan"></param>
         /// <param name="quantityToFind"></param>
-        /// <returns>IntPtr List representing the ABSOLUTE(not relative!) memory locations of the data, if found.</returns>
+        /// <returns>SimpleMemory obj representing the memory locations of the data, if found.</returns>
         /// <exception cref="SimpleProcessProxyException"></exception>
-        public List<IntPtr> ScanMemoryForPattern(SimplePattern pattern, byte[] memoryToScan = null, int quantityToFind = -1)
+        public List<SimpleMemory> ScanMemoryForPattern(SimplePattern pattern, byte[] memoryToScan = null, int quantityToFind = -1)
         {
             switch (quantityToFind)
             {
@@ -446,6 +458,7 @@ namespace SimplifiedMemoryManager
             }
 
             ScanManager scanManager = new ScanManager(quantityToFind);
+            List<SimpleMemory> results;
 
             if (memoryToScan != null)
             {
@@ -467,16 +480,29 @@ namespace SimplifiedMemoryManager
                         throw new SimpleProcessProxyException("No regions to read on this process, cannot scan memory");
                     
                     List<IntPtr> found = LinuxRegionScan(pattern, regions, quantityToFind);
-                    return found.Count == 0 
-                        ? throw new SimpleProcessProxyException("Pattern not found in process memory.") 
-                        : found;
+
+                    if (found.Count == 0)
+                        throw new SimpleProcessProxyException("Pattern not found in process memory.");
+                    
+                    results = new List<SimpleMemory>();
+                    foreach (IntPtr result in found)
+                    {
+                        results.Add(new SimpleMemory(result, ProcessBaseAddress));
+                    }
+
+                    return results;
                 }
             }
             scanManager.InitiateScan();
 
-            return scanManager.ScanResult.Count == 0 
-                ? throw new SimpleProcessProxyException("Pattern not found in process memory.")
-                : scanManager.ScanResult;
+            if (scanManager.ScanResult.Count == 0)
+                throw new SimpleProcessProxyException("Pattern not found in process memory.");
+
+            results = new List<SimpleMemory>();
+            foreach(var result in scanManager.ScanResult)
+                results.Add(new SimpleMemory(result, ProcessBaseAddress));
+            
+            return results;
         }
         
         private List<IntPtr> LinuxRegionScan(SimplePattern pattern,
