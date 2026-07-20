@@ -258,7 +258,7 @@ namespace SimplifiedMemoryManager
                 var parts = line.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
                 if (parts.Length < 2) continue;
                 if (!parts[1].Contains("r")) continue;
-                if (parts[1].Contains("x")) continue; // skip executable-only regions
+                //if (parts[1].Contains("x")) continue; // skip executable-only regions
 
                 var range = parts[0].Split('-');
                 if (range.Length != 2) continue;
