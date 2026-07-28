@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
@@ -31,6 +32,8 @@ namespace SimplifiedMemoryManager
             public SimpleMemory(IntPtr offset, IntPtr baseAddress)        
             {
                 Offset = offset;
+                if(RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+                    Offset = IntPtr.Add(baseAddress, offset.ToInt32());
                 ModuleBaseAddress = baseAddress;
             }
         }
@@ -368,35 +371,33 @@ namespace SimplifiedMemoryManager
         /// <param name="memoryToScan"></param>
         /// <returns>SimpleMemory obj representing the memory locations of the data, if found.</returns>
         /// <exception cref="SimpleProcessProxyException"></exception>
-        public SimpleMemory ScanMemoryForUniquePattern(SimplePattern pattern, byte[] memoryToScan = null)
+        public async Task<SimpleMemory> ScanMemoryForUniquePatternAsync(SimplePattern pattern, byte[] memoryToScan = null)
         {
             ScanManager scanManager = new ScanManager();
             //_platform.Close();
 
-            lock (ProcessToProxy)
+            if (memoryToScan != null)
             {
-                if (memoryToScan != null)
+                scanManager.ByteArrayScan(memoryToScan, pattern);
+                await scanManager.InitiateScan();
+            }
+            else
+            {
+                if (_platform is WindowsPlatformMemory)
                 {
-                    scanManager.ByteArrayScan(memoryToScan, pattern);
+                    // Windows path — scan by process modules
+                    await scanManager.FullProcessScan(pattern, ProcessToProxy, GetMemoryOutsideMainModule);
                 }
                 else
                 {
-                    if (_platform is WindowsPlatformMemory)
+                    List<(long, int, string)> regions = _platform.GetReadableRegionsWithName(ProcessToProxy.Id)?.ToList();
+                    if (regions != null)
                     {
-                        // Windows path — scan by process modules
-                        scanManager.FullProcessScan(pattern, ProcessToProxy, GetMemoryOutsideMainModule);
-                    }
-                    else
-                    {
-                        List<(long, int, string)> regions = _platform.GetReadableRegionsWithName(ProcessToProxy.Id)?.ToList();
-                        if (regions != null)
-                        {
-                            // Linux path — scan by memory region from /proc/{pid}/maps
-                            List<IntPtr> found = LinuxRegionScan(pattern, regions);
-                            return found.Count == 0
-                                ? throw new SimpleProcessProxyException("Pattern not found in process memory. (LINUX)")
-                                : new SimpleMemory(found[0], ProcessBaseAddress);
-                        }
+                        // Linux path — scan by memory region from /proc/{pid}/maps
+                        List<IntPtr> found = await LinuxRegionScanAsync(pattern, regions);
+                        return found.Count == 0
+                            ? throw new SimpleProcessProxyException("Pattern not found in process memory. (LINUX)")
+                            : new SimpleMemory(found[0], ProcessBaseAddress);
                     }
                 }
             }
@@ -457,7 +458,7 @@ namespace SimplifiedMemoryManager
         /// <param name="quantityToFind"></param>
         /// <returns>SimpleMemory obj representing the memory locations of the data, if found.</returns>
         /// <exception cref="SimpleProcessProxyException"></exception>
-        public List<SimpleMemory> ScanMemoryForPattern(SimplePattern pattern, byte[] memoryToScan = null, int quantityToFind = -1)
+        public async Task<List<SimpleMemory>> ScanMemoryForPatternAsync(SimplePattern pattern, byte[] memoryToScan = null, int quantityToFind = -1)
         {
             switch (quantityToFind)
             {
@@ -473,13 +474,14 @@ namespace SimplifiedMemoryManager
             if (memoryToScan != null)
             {
                 scanManager.ByteArrayScan(memoryToScan, pattern);
+                await scanManager.InitiateScan();
             }
             else
             {
                 if (_platform is WindowsPlatformMemory)
                 {
                     // Windows path — scan by process modules
-                    scanManager.FullProcessScan(pattern, ProcessToProxy, GetMemoryOutsideMainModule);
+                    await scanManager.FullProcessScan(pattern, ProcessToProxy, GetMemoryOutsideMainModule);
                 }
                 else
                 {
@@ -489,7 +491,7 @@ namespace SimplifiedMemoryManager
                     if (regions == null)
                         throw new SimpleProcessProxyException("No regions to read on this process, cannot scan memory");
                     
-                    List<IntPtr> found = LinuxRegionScan(pattern, regions, quantityToFind);
+                    List<IntPtr> found = await LinuxRegionScanAsync(pattern, regions, quantityToFind);
 
                     if (found.Count == 0)
                         throw new SimpleProcessProxyException("Pattern not found in process memory.");
@@ -503,7 +505,6 @@ namespace SimplifiedMemoryManager
                     return results;
                 }
             }
-            scanManager.InitiateScan();
 
             if (scanManager.ScanResult.Count == 0)
                 throw new SimpleProcessProxyException("Pattern not found in process memory.");
@@ -515,57 +516,106 @@ namespace SimplifiedMemoryManager
             return results;
         }
         
-        private List<IntPtr> LinuxRegionScan(SimplePattern pattern,
-            List<(long start, int size, string name)> regionList, int quantityToFind = -1)
+        private async Task<List<IntPtr>> LinuxRegionScanAsync(SimplePattern pattern,
+            List<(long start, int size, string name)> regionList, int quantityToFind = -1,
+            CancellationToken cancellationToken = default)
         {
-            List<IntPtr> results = new List<IntPtr>();
+            var results = new ConcurrentBag<IntPtr>();
             List<PatternExpression> parsed = pattern.ParsedPattern;
             int patternLength = parsed.Count;
             int pid = ProcessToProxy.Id;
 
+            int foundCount = 0;
+            int degreeOfParallelism = Environment.ProcessorCount;
+
+            using var stopCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            using var throttle = new SemaphoreSlim(degreeOfParallelism, degreeOfParallelism);
+
+            var tasks = new List<Task>(regionList.Count);
+
             for (int r = 0; r < regionList.Count; r++)
             {
-                var (start, size, name) = regionList[r];
-                long nextStart = (r + 1 < regionList.Count)
-                    ? regionList[r + 1].start
-                    : start + size;
+                int regionIndex = r; // capture for closure
 
-                long rawReadSize = nextStart - start;
-                int readSize = (rawReadSize <= 0 || rawReadSize > size * 2 || rawReadSize > 256 * 1024 * 1024)
-                    ? size
-                    : (int)rawReadSize;
+                await throttle.WaitAsync(stopCts.Token).ConfigureAwait(false);
 
-                try
+                // If quantity was met while we were waiting for a slot, stop launching new work.
+                if (stopCts.IsCancellationRequested)
                 {
-                    byte[] buffer = new byte[readSize];
-                    _platform.ReadBytes(new IntPtr(start), buffer, pid);
+                    throttle.Release();
+                    break;
+                }
 
-                    for (int i = 0; i <= buffer.Length - patternLength; i++)
+                Task task = Task.Run(() =>
+                {
+                    try
                     {
-                        bool match = true;
-                        for (int j = 0; j < patternLength; j++)
+                        var (start, size, name) = regionList[regionIndex];
+                        long nextStart = (regionIndex + 1 < regionList.Count)
+                            ? regionList[regionIndex + 1].start
+                            : start + size;
+                        long rawReadSize = nextStart - start;
+                        int readSize = (rawReadSize <= 0 || rawReadSize > size * 2 || rawReadSize > 256 * 1024 * 1024)
+                            ? size
+                            : (int)rawReadSize;
+
+                        if (stopCts.IsCancellationRequested) return;
+
+                        byte[] buffer = new byte[readSize];
+                        _platform.ReadBytes(new IntPtr(start), buffer, pid);
+
+                        for (int i = 0; i <= buffer.Length - patternLength; i++)
                         {
-                            PatternExpression expr = parsed[j];
-                            if (expr.Operation == Operation.SkipOne) continue;
-                            if (expr.Operation == Operation.Exact && expr.Operand != buffer[i + j])
+                            if (stopCts.IsCancellationRequested) return;
+
+                            bool match = true;
+                            for (int j = 0; j < patternLength; j++)
                             {
-                                match = false;
-                                break;
+                                PatternExpression expr = parsed[j];
+                                if (expr.Operation == Operation.SkipOne) continue;
+                                if (expr.Operation == Operation.Exact && expr.Operand != buffer[i + j])
+                                {
+                                    match = false;
+                                    break;
+                                }
+                            }
+
+                            if (match)
+                            {
+                                results.Add(new IntPtr(start + i));
+
+                                if (quantityToFind > 0 && Interlocked.Increment(ref foundCount) >= quantityToFind)
+                                {
+                                    stopCts.Cancel(); // signal every other in-flight region to stop
+                                    return;
+                                }
                             }
                         }
-
-                        if (match)
-                        {
-                            results.Add(new IntPtr(start + i));
-                            if (quantityToFind > 0 && results.Count >= quantityToFind)
-                                return results;
-                        }
                     }
-                }
-                catch { continue; }
+                    catch
+                    {
+                        // Mirrors original 'catch { continue; }' — skip unreadable regions.
+                    }
+                    finally
+                    {
+                        throttle.Release();
+                    }
+                }, cancellationToken);
+
+                tasks.Add(task);
             }
 
-            return results;
+            // Wait for everything currently running/queued to wind down.
+            // Individual task exceptions are already swallowed above, so this just
+            // waits for completion — no need for a try/catch around it.
+            await Task.WhenAll(tasks).ConfigureAwait(false);
+
+            var resultList = results.OrderBy(p => p.ToInt64()).ToList();
+
+            if (quantityToFind > 0 && resultList.Count > quantityToFind)
+                resultList = resultList.Take(quantityToFind).ToList();
+
+            return resultList;
         }
         #endregion
     }

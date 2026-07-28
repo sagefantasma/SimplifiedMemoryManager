@@ -46,7 +46,7 @@ namespace SimplifiedMemoryManager
             MasterCancellationTokenSource.Cancel();
         }
 
-        public bool InitiateScan()
+        public async Task<bool> InitiateScan()
         {
             IntPtr foundPosition = new IntPtr();
             /*List<Thread> runningThreads = new List<Thread>();
@@ -65,7 +65,7 @@ namespace SimplifiedMemoryManager
                 runningThreads.Add(scanningTask);
             }
 
-            WaitForScanResult(runningThreads);
+            await WaitForScanResult(runningThreads);
 
             return true;
         }
@@ -89,7 +89,7 @@ namespace SimplifiedMemoryManager
             }
         }
 
-        public void FullProcessScan(SimplePattern pattern, Process processToProxy, Func<IntPtr, long, byte[]> GetMemory)
+        public async Task FullProcessScan(SimplePattern pattern, Process processToProxy, Func<IntPtr, long, byte[]> GetMemory)
         {
             foreach(ProcessModule module in processToProxy.Modules)
             {
@@ -113,10 +113,10 @@ namespace SimplifiedMemoryManager
                 }
             }
 
-            InitiateScan();
+            await InitiateScan();
         }
 
-        private static void WaitForScanResult(List<Task> runningThreads)
+        private static async Task WaitForScanResult(List<Task> runningThreads)
         {
             /*while (runningThreads.Any(thread => thread.IsAlive == true))
             {
@@ -126,6 +126,7 @@ namespace SimplifiedMemoryManager
             {
 
             }
+            await Task.WhenAll(runningThreads);
         }
     }
 }
