@@ -13,15 +13,25 @@ namespace SimplifiedMemoryManager
 {
     public class SimpleProcessProxy : IDisposable
     {
+        /// <summary>
+        /// This object is handled slightly differently for different platforms(Windows/Linux). For Linux, the Offset
+        /// should already be the absolute location within system memory, and the BaseAddress is included as a sanity
+        /// check if you need it. For Windows, the included BaseAddress is *pre-emptively* added to the Offset where
+        /// found in system memory. This is due to the difference in nature between memory management between platforms.
+        /// BaseAddress is once again included for sanity, and so you may more simply *subtract* it from the Offset if
+        /// this default implementation does not work for you. The intention with this is to allow you to use the Offset
+        /// value in conjunction with the "GetMemoryFromPointer" method to access the memory represented by SimpleMemory
+        /// on both Windows and Linux platforms without needing to include platform-specific logic.
+        /// </summary>
         public class SimpleMemory
         {
-            public IntPtr ExactAddress { get; set; }
-            public IntPtr OffsetAddress { get; set; }
+            public IntPtr Offset { get; set; }
+            public IntPtr ModuleBaseAddress { get; set; }
 
-            public SimpleMemory(IntPtr exactAddress, IntPtr baseAddress)        
+            public SimpleMemory(IntPtr offset, IntPtr baseAddress)        
             {
-                ExactAddress = exactAddress;
-                OffsetAddress = baseAddress;
+                Offset = offset;
+                ModuleBaseAddress = baseAddress;
             }
         }
 
