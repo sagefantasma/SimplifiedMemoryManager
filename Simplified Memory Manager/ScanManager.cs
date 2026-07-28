@@ -20,7 +20,7 @@ namespace SimplifiedMemoryManager
             public byte[] Memory { get; set; }
         }
         private List<ScanThread> ScanThreads { get; set; }
-        public List<IntPtr> ScanResult { get; set; }
+        public List<Tuple<IntPtr, ProcessModule>> ScanResult { get; set; }
         private double AvailableCores { get; set; }
         private long BufferSizePerThread { get; set; }
         private static SPPCancellationTokenSource MasterCancellationTokenSource { get; set; } = new SPPCancellationTokenSource();
@@ -31,7 +31,7 @@ namespace SimplifiedMemoryManager
         public ScanManager(int quantityToFind = 1)
         {
             ScanThreads = new List<ScanThread>();
-            ScanResult = new List<IntPtr>();
+            ScanResult = new List<Tuple<IntPtr,ProcessModule>>();
             AvailableCores = Environment.ProcessorCount;
             MasterCancellationTokenSource = new SPPCancellationTokenSource(quantityToFind);
         }
@@ -93,7 +93,7 @@ namespace SimplifiedMemoryManager
         {
             foreach(ProcessModule module in processToProxy.Modules)
             {
-                ScanThread moduleScanThread = new ScanThread(pattern, MasterCancellationTokenSource.Token, PatternMatched, this);
+                ScanThread moduleScanThread = new ScanThread(pattern, MasterCancellationTokenSource.Token, PatternMatched, this, module, processToProxy);
                 try
                 {
                     moduleScanThread.Data = GetMemory(module.BaseAddress, module.ModuleMemorySize);

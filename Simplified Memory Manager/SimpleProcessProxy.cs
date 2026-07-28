@@ -21,7 +21,7 @@ namespace SimplifiedMemoryManager
             public SimpleMemory(IntPtr exactAddress, IntPtr baseAddress)        
             {
                 ExactAddress = exactAddress;
-                OffsetAddress = new IntPtr(exactAddress.ToInt64() - baseAddress.ToInt64());
+                OffsetAddress = baseAddress;
             }
         }
 
@@ -384,7 +384,7 @@ namespace SimplifiedMemoryManager
                             // Linux path — scan by memory region from /proc/{pid}/maps
                             List<IntPtr> found = LinuxRegionScan(pattern, regions);
                             return found.Count == 0
-                                ? throw new SimpleProcessProxyException("Pattern not found in process memory.")
+                                ? throw new SimpleProcessProxyException("Pattern not found in process memory. (LINUX)")
                                 : new SimpleMemory(found[0], ProcessBaseAddress);
                         }
                     }
@@ -392,8 +392,8 @@ namespace SimplifiedMemoryManager
             }
 
             return scanManager.ScanResult.Count == 0 
-                ? throw new SimpleProcessProxyException("Pattern not found in process memory.") 
-                : new SimpleMemory(scanManager.ScanResult.First(), ProcessBaseAddress);
+                ? throw new SimpleProcessProxyException("Pattern not found in process memory. (WINDOWS)") 
+                : new SimpleMemory(scanManager.ScanResult.First().Item1, scanManager.ScanResult.First().Item2.BaseAddress);
         }
         
         public IntPtr FollowPointer(IntPtr pointer, bool bigEndian, int sizeOfPointer = 8)
@@ -500,7 +500,7 @@ namespace SimplifiedMemoryManager
 
             results = new List<SimpleMemory>();
             foreach(var result in scanManager.ScanResult)
-                results.Add(new SimpleMemory(result, ProcessBaseAddress));
+                results.Add(new SimpleMemory(result.Item1, result.Item2.BaseAddress));
             
             return results;
         }
