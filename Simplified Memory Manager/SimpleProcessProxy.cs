@@ -203,11 +203,15 @@ namespace SimplifiedMemoryManager
             }
         }
 
-        private void SetMemoryOutsideMainModule(IntPtr offset, byte[] value)
+        private void SetMemoryOutsideMainModule(IntPtr offset, byte[] value, bool forceWrite = false)
         {
             try
             {
                 OpenProcess();
+                if (forceWrite)
+                {
+                    _platform.ForceReadWritePermissions(offset, value.Length);
+                }
                 WriteBytesToMemory(offset, value);
             }
             catch (Exception e)
@@ -442,8 +446,8 @@ namespace SimplifiedMemoryManager
         public byte[] GetMemoryFromPointer(IntPtr pointer, int size)
             => GetMemoryOutsideMainModule(pointer, size);
 
-        public void SetMemoryAtPointer(IntPtr pointer, byte[] data)
-            => SetMemoryOutsideMainModule(pointer, data);
+        public void SetMemoryAtPointer(IntPtr pointer, byte[] data, bool forceWrite = false)
+            => SetMemoryOutsideMainModule(pointer, data, forceWrite);
 
         /// <summary>
         /// Scan memory related to the process you are proxying for a specified SimplePattern. Provide only
