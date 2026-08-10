@@ -530,7 +530,7 @@ namespace SimplifiedMemoryManager
             int pid = ProcessToProxy.Id;
 
             int foundCount = 0;
-            int degreeOfParallelism = Environment.ProcessorCount;
+            int degreeOfParallelism = Environment.ProcessorCount / 2; //TODO: keep it like this, or allow hammering? Maybe make it a choice?
 
             using var stopCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             using var throttle = new SemaphoreSlim(degreeOfParallelism, degreeOfParallelism);

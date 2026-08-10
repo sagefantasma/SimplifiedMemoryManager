@@ -4,6 +4,7 @@ namespace SimplifiedMemoryManager.Tests;
 
 public class SimpleProcessProxyIntegrationTest : IDisposable
 {
+	//TODO: This entire class is busted on Linux :(
 	Process _testProcess = new Process();
 	public void Dispose()
 	{
@@ -139,7 +140,9 @@ public class SimpleProcessProxyIntegrationTest : IDisposable
             byte[] fakedMemory = RealMemory.LoadSampleMemory();
 
             //Act
-            List<nint> result = simpleProcessProxy.ScanMemoryForPattern(new SimplePattern(RealMemory.ValidAoBInMemory), fakedMemory);
+            List<SimpleProcessProxy.SimpleMemory> result =
+	            simpleProcessProxy.ScanMemoryForPatternAsync(new SimplePattern(RealMemory.ValidAoBInMemory),
+		            fakedMemory).Result;
 
             //Assert
             Assert.True(result.Count > 0);
@@ -157,7 +160,7 @@ public class SimpleProcessProxyIntegrationTest : IDisposable
             //Act
             void badAoBScan()
             {
-                List<nint> result = simpleProcessProxy.ScanMemoryForPattern(new SimplePattern(RealMemory.InvalidAoBInMemory), fakedMemory);
+                List<SimpleProcessProxy.SimpleMemory> result = simpleProcessProxy.ScanMemoryForPatternAsync(new SimplePattern(RealMemory.InvalidAoBInMemory), fakedMemory).Result;
             }
 
             //Assert
@@ -174,10 +177,10 @@ public class SimpleProcessProxyIntegrationTest : IDisposable
             byte[] fakedMemory = RealMemory.LoadSampleMemory();
 
             //Act
-            nint result = proxy.ScanMemoryForUniquePattern(new SimplePattern(RealMemory.ValidAoBInMemory), fakedMemory);
+            SimpleProcessProxy.SimpleMemory result = proxy.ScanMemoryForUniquePatternAsync(new SimplePattern(RealMemory.ValidAoBInMemory), fakedMemory).Result;
 
             //Assert
-            Assert.True(result > 0);
+            Assert.True(result.Offset > 0);
         }
     }
 }

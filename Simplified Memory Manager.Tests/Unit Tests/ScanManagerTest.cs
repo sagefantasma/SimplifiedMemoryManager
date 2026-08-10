@@ -44,9 +44,10 @@ namespace Simplified_Memory_Manager.Tests.Unit_Tests
 
             //Act
             scanManager.ByteArrayScan(RealMemory.LoadSampleMemory(), new SimplePattern(RealMemory.InvalidAoBInMemory));
+            scanManager.InitiateScan().Wait();
 
             //Assert
-            Assert.NotEqual(RealMemory.ValidAoBLocation, scanManager.ScanResult.FirstOrDefault());
+            Assert.NotEqual(RealMemory.ValidAoBLocation, scanManager.ScanResult.FirstOrDefault()?.Item1);
         }
 
         [Fact]
@@ -57,9 +58,11 @@ namespace Simplified_Memory_Manager.Tests.Unit_Tests
 
             //Act
             scanManager.ByteArrayScan(RealMemory.LoadSampleMemory(), new SimplePattern(RealMemory.ValidAoBInMemory));
+            scanManager.InitiateScan().Wait();
+            
 
             //Assert
-            Assert.True(scanManager.ScanResult.FirstOrDefault() > 0);
+            Assert.True(scanManager.ScanResult.FirstOrDefault().Item1 > 0);
         }
     }
 }
