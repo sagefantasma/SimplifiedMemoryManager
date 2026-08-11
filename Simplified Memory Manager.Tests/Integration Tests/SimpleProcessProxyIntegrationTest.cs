@@ -41,7 +41,7 @@ public class SimpleProcessProxyIntegrationTest : IDisposable
 			}
 
 			//Assert
-			Assert.Throws<SimpleProcessProxyException>(readFromDeadProcess);
+			Assert.Throws<SimpleProcessProxyAggregateException>(readFromDeadProcess);
 		}
 	}
 
@@ -69,7 +69,7 @@ public class SimpleProcessProxyIntegrationTest : IDisposable
             int indexToInvert = currentValue.ToList().IndexOf(0);
 
             //Act & Assert
-            Assert.Throws<SimpleProcessProxyException>(() => simpleProcessProxy.InvertBooleanValue(indexToInvert));
+            Assert.Throws<SimpleProcessProxyAggregateException>(() => simpleProcessProxy.InvertBooleanValue(indexToInvert));
         }
     }
 
@@ -124,7 +124,7 @@ public class SimpleProcessProxyIntegrationTest : IDisposable
                 simpleProcessProxy.ModifyProcessOffset(indexToModify, inputData);
             }
 
-            Assert.Throws<SimpleProcessProxyException>(safeModification);
+            Assert.Throws<SimpleProcessProxyAggregateException>(safeModification);
         }
     }
 
@@ -164,7 +164,7 @@ public class SimpleProcessProxyIntegrationTest : IDisposable
             }
 
             //Assert
-            Assert.Throws<SimpleProcessProxyException>(badAoBScan);
+            Assert.Throws<AggregateException>(badAoBScan);
         }
     }
 

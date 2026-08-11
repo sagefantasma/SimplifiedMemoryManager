@@ -37,6 +37,7 @@ public class SimpleProcessProxyTest
     [Fact]
     public void CanGetProcessSnapshot()
     {
+        //I think this test is just broken in general
         //Arrange
         using (SimpleProcessProxy simpleProcessProxy = new SimpleProcessProxy(Process.GetCurrentProcess()))
         {

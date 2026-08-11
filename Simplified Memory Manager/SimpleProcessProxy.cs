@@ -360,7 +360,7 @@ namespace SimplifiedMemoryManager
 
         public byte[] GetProcessSnapshot()
         {
-            try { return GetProcessSnapshot(ProcessToProxy.PeakPagedMemorySize64); }
+            try { return GetProcessSnapshot(ProcessToProxy.MainModule.ModuleMemorySize); }
             catch (Exception e) { throw new SimpleProcessProxyAggregateException("Failed to get full-state of process", e); }
         }
 
@@ -406,9 +406,11 @@ namespace SimplifiedMemoryManager
                 }
             }
 
-            return scanManager.ScanResult.Count == 0 
-                ? throw new SimpleProcessProxyException("Pattern not found in process memory. (WINDOWS)") 
-                : new SimpleMemory(scanManager.ScanResult.First().Item1, scanManager.ScanResult.First().Item2.BaseAddress);
+            return scanManager.ScanResult.Count == 0
+                ? throw new SimpleProcessProxyException("Pattern not found in process memory. (WINDOWS)")
+                : memoryToScan != null 
+                    ? new SimpleMemory(scanManager.ScanResult.First().Item1, IntPtr.Zero)
+                    : new SimpleMemory(scanManager.ScanResult.First().Item1, scanManager.ScanResult.First().Item2.BaseAddress);
         }
         
         public IntPtr FollowPointer(IntPtr pointer, bool bigEndian, int sizeOfPointer = 8)
@@ -514,8 +516,13 @@ namespace SimplifiedMemoryManager
                 throw new SimpleProcessProxyException("Pattern not found in process memory.");
 
             results = new List<SimpleMemory>();
-            foreach(var result in scanManager.ScanResult)
-                results.Add(new SimpleMemory(result.Item1, result.Item2.BaseAddress));
+            foreach (var result in scanManager.ScanResult)
+            {
+                if (memoryToScan == null)
+                    results.Add(new SimpleMemory(result.Item1, result.Item2.BaseAddress));
+                else
+                    results.Add(new SimpleMemory(result.Item1, IntPtr.Zero));
+            }
             
             return results;
         }
