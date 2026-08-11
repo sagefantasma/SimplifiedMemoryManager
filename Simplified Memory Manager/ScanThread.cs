@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Reflection;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -18,21 +19,26 @@ namespace SimplifiedMemoryManager
 		public EventHandler<MatchFoundEventArgs> PatternMatched { get; private set;}
 		public IntPtr StartingPosition { get; set; }
 		public bool ThreadRequestedCancellation { get; set; } = false;
-		
-		public ScanThread(SimplePattern pattern, CancellationToken token, EventHandler<MatchFoundEventArgs> patternMatched, ScanManager manager, IntPtr startingPosition = default)
+		public ProcessModule Module { get; set; }
+		public Process BaseProcess { get; set; }
+
+		public ScanThread(SimplePattern pattern, CancellationToken token, EventHandler<MatchFoundEventArgs> patternMatched, 
+			ScanManager manager, ProcessModule module = null, Process baseProcess = null, IntPtr startingPosition = default)
 		{
 			Pattern = pattern;
 			Token = token;
 			PatternMatched += patternMatched;
 			Manager = manager;
+			Module = module;
+			BaseProcess = baseProcess;
 			StartingPosition = startingPosition;
 		}
 		
 		public class MatchFoundEventArgs : EventArgs
 		{
-			public MatchFoundEventArgs(IntPtr index)
+			public MatchFoundEventArgs(IntPtr index, ProcessModule module)
 			{
-                Manager.ScanResult.Add(index);
+                Manager.ScanResult.Add(new Tuple<IntPtr, ProcessModule>(index, module));
 			}
 		}
 
@@ -64,7 +70,7 @@ namespace SimplifiedMemoryManager
 								{
 									//perfect match
 									foundPosition = IntPtr.Add(StartingPosition, dataIndex);
-									PatternMatched?.Invoke(this, new MatchFoundEventArgs(foundPosition));
+									PatternMatched?.Invoke(this, new MatchFoundEventArgs(foundPosition, Module));
 								}
 								else
 								{

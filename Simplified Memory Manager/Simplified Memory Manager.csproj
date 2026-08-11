@@ -17,6 +17,7 @@
     <FileVersion>$(AssemblyVersion)</FileVersion>
     <AssemblyVersion>1.2.0</AssemblyVersion>
     <Version>$(AssemblyVersion)</Version>
+    <LangVersion>9</LangVersion>
   </PropertyGroup>
 
   <ItemGroup>

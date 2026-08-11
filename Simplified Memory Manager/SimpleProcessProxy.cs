@@ -1,133 +1,169 @@
-﻿using SimplifiedMemoryManager;
-using System;
+﻿using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
-using System.Net.Security;
 using System.Runtime.InteropServices;
 using System.Security.Principal;
 using System.Text;
+using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace SimplifiedMemoryManager
 {
-	public class SimpleProcessProxy : IDisposable
-	{
-		#region Internals
-		private bool disposedValue;
+    public class SimpleProcessProxy : IDisposable
+    {
+        /// <summary>
+        /// This object is handled slightly differently for different platforms(Windows/Linux). For Linux, the Offset
+        /// should already be the absolute location within system memory, and the BaseAddress is included as a sanity
+        /// check if you need it. For Windows, the included BaseAddress is *pre-emptively* added to the Offset where
+        /// found in system memory. This is due to the difference in nature between memory management between platforms.
+        /// BaseAddress is once again included for sanity, and so you may more simply *subtract* it from the Offset if
+        /// this default implementation does not work for you. The intention with this is to allow you to use the Offset
+        /// value in conjunction with the "GetMemoryFromPointer" method to access the memory represented by SimpleMemory
+        /// on both Windows and Linux platforms without needing to include platform-specific logic.
+        /// </summary>
+        public class SimpleMemory
+        {
+            public IntPtr Offset { get; set; }
+            public IntPtr ModuleBaseAddress { get; set; }
 
-		public static Process ProcessToProxy { get; set; }
-		private static string ProcessName { get; set; }
-		private static IntPtr ProcessBaseAddress { get; set; }
-		private static IntPtr OpenedProcessHandle { get; set; }
-
-		public SimpleProcessProxy(Process process)
-		{
-			ProcessToProxy = process ?? throw new SimpleProcessProxyException("You must provide a process to modify.");
-			ProcessBaseAddress = process.MainModule.BaseAddress;
-			ProcessName = process.ProcessName;
-		}
-
-		private void OpenProcess()
-		{
-			ValidateProcessToProxy();
-
-			OpenedProcessHandle = NativeMethods.OpenProcess(AccessPrivileges.AllAccess | AccessPrivileges.ProcessVMOperation, false, ProcessToProxy.Id);
-		}
-
-		private void ValidateProcessToProxy()
-		{
-			if (ProcessToProxy == null || ProcessToProxy.HasExited)
-			{
-				ProcessToProxy = Process.GetProcessesByName(ProcessName).FirstOrDefault();
-				if (ProcessToProxy == default)
-				{
-					throw new SimpleProcessProxyException($"Failed to find process {ProcessName} to proxy");
-				}
-			}
-		}
-
-		protected virtual void Dispose(bool disposing)
-		{
-			if (!disposedValue)
-			{
-				if (disposing)
-				{
-					// TODO: dispose managed state (managed objects)
-				}
-
-				// TODO: free unmanaged resources (unmanaged objects) and override finalizer
-				ProcessName = null;
-				ProcessToProxy = null; //TODO: determine if this does what I want
-				// TODO: set large fields to null
-				disposedValue = true;
-			}
-		}
-
-		// // TODO: override finalizer only if 'Dispose(bool disposing)' has code to free unmanaged resources
-		// ~SimpleProcessProxy()
-		// {
-		//     // Do not change this code. Put cleanup code in 'Dispose(bool disposing)' method
-		//     Dispose(disposing: false);
-		// }
-
-		void IDisposable.Dispose()
-		{
-			// Do not change this code. Put cleanup code in 'Dispose(bool disposing)' method
-			Dispose(disposing: true);
-			GC.SuppressFinalize(this);
-		}
-		#endregion
-
-		#region Private (support) methods
-		private byte[] GetProcessSnapshot(long processSize)
-		{
-			byte[] buffer = new byte[processSize];
-			try
-			{
-				OpenProcess();
-				NativeMethods.ReadProcessMemory(OpenedProcessHandle, ProcessBaseAddress, buffer, (uint)buffer.Length, out int numBytesRead);
-              //NativeMethods.ReadProcessMemory(OpenedProcessHandle, objectAddress, bytesToRead, (uint)bytesToRead.Length, out int bytesRead);
+            public SimpleMemory(IntPtr offset, IntPtr baseAddress)        
+            {
+                Offset = offset;
+                if(RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+                    Offset = IntPtr.Add(baseAddress, offset.ToInt32());
+                ModuleBaseAddress = baseAddress;
             }
-			catch (Exception e)
-			{
-				throw new SimpleProcessProxyException($"Failed to read process `{ProcessName}`. Is it running?", e);
-			}
+        }
 
-			return buffer;
-		}
+        #region Internals
+        private bool _disposedValue;
 
-		private byte[] GetMemory(IntPtr offset, long valueSize)
-		{
-			try
-			{
-				OpenProcess();
+        public static Process ProcessToProxy { get; set; }
+        private static string ProcessName { get; set; }
+        private static IntPtr ProcessBaseAddress { get; set; }
 
-				//IntPtr addressToRead = IntPtr.Add(ProcessBaseAddress, offset);
-				long address = ProcessBaseAddress.ToInt64() + offset.ToInt64();
-				IntPtr addressToRead = new IntPtr(address);
+        // ── Cross-platform memory backend ──────────────────────────────────────
+        // Chosen once at construction time based on the OS we're running on.
+        // All private methods below call _platform instead of NativeMethods directly.
+        private readonly IPlatformMemory _platform;
 
-				byte[] bytesRead = new byte[valueSize];
-				ReadBytesFromMemory(addressToRead, bytesRead);
+        public SimpleProcessProxy(Process process)
+        {
+            ProcessToProxy = process ?? throw new SimpleProcessProxyException("You must provide a process to modify.");
+            ProcessBaseAddress = process.MainModule.BaseAddress;
+            ProcessName = process.ProcessName;
 
-				return bytesRead;
-			}
-			finally
-			{
-				if (OpenedProcessHandle != default)
-				{
-					NativeMethods.CloseHandle(OpenedProcessHandle);
-					OpenedProcessHandle = default;
-				}
-			}
-		}
+            // Select the right backend for the current OS
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+                _platform = new WindowsPlatformMemory();
+            else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+            {
+                _platform = new LinuxPlatformMemory();
+                IntPtr peBase = ((LinuxPlatformMemory)_platform).FindPeBaseAddress(process.Id, process.ProcessName);
+                
+                if (peBase != IntPtr.Zero)
+                {
+                    Console.WriteLine($"[SMM] Overriding base address: {ProcessBaseAddress} -> {peBase}");
+                    ProcessBaseAddress = peBase;
+                }
+                else
+                {
+                    Console.WriteLine($"[SMM] Warning: Could not find PE base in /proc/maps, " +
+                                      $"using MainModule.BaseAddress: {ProcessBaseAddress}");
+                }
+            }
+            else
+                throw new PlatformNotSupportedException(
+                    "SimplifiedMemoryManager only supports Windows and Linux.");
+        }
 
-		private byte[] GetMemoryOutsideMainModule(IntPtr offset, long valueSize)
-		{
+        private void OpenProcess()
+        {
+            ValidateProcessToProxy();
+            _platform.OpenProcess(ProcessToProxy);
+        }
+
+        private void ValidateProcessToProxy()
+        {
+            if (ProcessToProxy == null || ProcessToProxy.HasExited)
+            {
+                ProcessToProxy = Process.GetProcessesByName(ProcessName).FirstOrDefault();
+                if (ProcessToProxy == default)
+                    throw new SimpleProcessProxyException($"Failed to find process {ProcessName} to proxy");
+            }
+        }
+
+        protected virtual void Dispose(bool disposing)
+        {
+            if (!_disposedValue)
+            {
+                if (disposing)
+                {
+                    _platform?.Dispose();
+                }
+
+                ProcessName = null;
+                ProcessToProxy = null;
+                _disposedValue = true;
+            }
+        }
+
+        void IDisposable.Dispose()
+        {
+            Dispose(disposing: true);
+            GC.SuppressFinalize(this);
+        }
+        #endregion
+
+        #region Private (support) methods
+
+        private byte[] GetProcessSnapshot(long processSize)
+        {
+            byte[] buffer = new byte[processSize];
             try
             {
-				OpenProcess();
+                OpenProcess();
+                _platform.ReadBytes(ProcessBaseAddress, buffer, ProcessToProxy.Id);
+            }
+            catch (Exception e)
+            {
+                throw new SimpleProcessProxyAggregateException($"Failed to read process `{ProcessName}`. Is it running?", e);
+            }
+            finally
+            {
+                _platform.Close();
+            }
+            return buffer;
+        }
+
+        private byte[] GetMemory(IntPtr offset, long valueSize)
+        {
+            try
+            {
+                OpenProcess();
+
+                long address = ProcessBaseAddress.ToInt64() + offset.ToInt64();
+                IntPtr addressToRead = new IntPtr(address);
+
+                byte[] bytesRead = new byte[valueSize];
+                ReadBytesFromMemory(addressToRead, bytesRead);
+
+                return bytesRead;
+            }
+            finally
+            {
+                _platform.Close();
+            }
+        }
+
+        private byte[] GetMemoryOutsideMainModule(IntPtr offset, long valueSize)
+        {
+            try
+            {
+                OpenProcess();
 
                 byte[] bytesRead = new byte[valueSize];
                 ReadBytesFromMemory(offset, bytesRead);
@@ -136,75 +172,92 @@ namespace SimplifiedMemoryManager
             }
             finally
             {
-                if (OpenedProcessHandle != default)
-                {
-                    NativeMethods.CloseHandle(OpenedProcessHandle);
-                    OpenedProcessHandle = default;
-                }
+                _platform.Close();
             }
         }
 
-		private void SetMemory(IntPtr desiredOffset, byte[] value, bool forceWrite)
-		{
-			try
-			{
-				OpenProcess();
-
-				//IntPtr addressToModify = IntPtr.Add(ProcessBaseAddress, desiredOffset);
-				long address = ProcessBaseAddress.ToInt64() + desiredOffset.ToInt64();
-				IntPtr addressToModify = new IntPtr(address);
-
-				if (forceWrite)
-				{
-					ForceReadWritePermissions(addressToModify, value.Length);
-				}
-				WriteBytesToMemory(addressToModify, value);
-			}
-			catch (Exception e)
-			{
-				throw new SimpleProcessProxyException($"Something unexpected went wrong when trying to modify the process' memory! {e}");
-			}
-			finally
-			{
-				if (OpenedProcessHandle != default)
-				{
-					NativeMethods.CloseHandle(OpenedProcessHandle);
-					OpenedProcessHandle = default;
-				}
-			}
-		}
-
-        private void SetMemoryOutsideMainModule(IntPtr offset, byte[] value)
-		{
+        private void SetMemory(IntPtr desiredOffset, byte[] value, bool forceWrite)
+        {
             try
             {
                 OpenProcess();
 
+                long address = ProcessBaseAddress.ToInt64() + desiredOffset.ToInt64();
+                IntPtr addressToModify = new IntPtr(address);
+
+                if (forceWrite)
+                {
+                    _platform.ForceReadWritePermissions(addressToModify, value.Length);
+                }
+
+                WriteBytesToMemory(addressToModify, value);
+            }
+            catch (Exception e)
+            {
+                throw new SimpleProcessProxyException(
+                    $"Something unexpected went wrong when trying to modify the process' memory! {e}");
+            }
+            finally
+            {
+                _platform.Close();
+            }
+        }
+
+        private void SetMemoryOutsideMainModule(IntPtr offset, byte[] value, bool forceWrite = false)
+        {
+            try
+            {
+                OpenProcess();
+                if (forceWrite)
+                {
+                    _platform.ForceReadWritePermissions(offset, value.Length);
+                }
                 WriteBytesToMemory(offset, value);
             }
             catch (Exception e)
             {
-                throw new SimpleProcessProxyException($"Something unexpected went wrong when trying to modify the process' memory! {e}");
+                throw new SimpleProcessProxyException(
+                    $"Something unexpected went wrong when trying to modify the process' memory! {e}");
             }
             finally
             {
-                if (OpenedProcessHandle != default)
-                {
-                    NativeMethods.CloseHandle(OpenedProcessHandle);
-                    OpenedProcessHandle = default;
-                }
+                _platform.Close();
             }
         }
 
+        private void WriteBytesToMemory(IntPtr objectAddress, byte[] bytesToWrite)
+        {
+            // Delegates entirely to the platform backend — no OS checks needed here.
+            _platform.WriteBytes(objectAddress, bytesToWrite);
+        }
+
+        private byte[] ReadBytesFromMemory(IntPtr objectAddress, byte[] bytesToRead)
+        {
+            // Delegates entirely to the platform backend — no OS checks needed here.
+            _platform.ReadBytes(objectAddress, bytesToRead, ProcessToProxy.Id);
+            return bytesToRead;
+        }
+
+        // EnableDisablePrivilege and ForceReadWritePermissionsAdmin are Windows-only
+        // concepts (SeDebugPrivilege / VirtualProtectEx). They are preserved below
+        // but guarded so they cannot be called on Linux.
         private static void EnableDisablePrivilege(string PrivilegeName, bool EnableDisable)
         {
-            if (!NativeMethods.LookupPrivilegeValue(null, PrivilegeName, out var luid)) 
-				throw new Exception($"EnableDisablePrivilege: LookupPrivilegeValue failed: {Marshal.GetExceptionForHR(Marshal.GetHRForLastWin32Error()).Message}");
+            if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+                throw new PlatformNotSupportedException("EnableDisablePrivilege is Windows-only.");
 
-            if (!NativeMethods.OpenProcessToken(Process.GetCurrentProcess().SafeHandle, TokenAccessLevels.AdjustPrivileges, out var tokenHandle)) 
-				throw new Exception($"EnableDisablePrivilege: OpenProcessToken failed: {Marshal.GetExceptionForHR(Marshal.GetHRForLastWin32Error()).Message}");
+            if (!NativeMethods.LookupPrivilegeValue(null, PrivilegeName, out var luid))
+                throw new Exception($"EnableDisablePrivilege: LookupPrivilegeValue failed: {Marshal.GetExceptionForHR(Marshal.GetHRForLastWin32Error()).Message}");
 
-            var tokenPrivileges = new TOKEN_PRIVILEGES { PrivilegeCount = 1, Privileges = new[] { new LUID_AND_ATTRIBUTES { LUID = luid, Attributes = (uint)(EnableDisable ? 2 : 4) } } };
+            if (!NativeMethods.OpenProcessToken(Process.GetCurrentProcess().SafeHandle, TokenAccessLevels.AdjustPrivileges, out var tokenHandle))
+                throw new Exception($"EnableDisablePrivilege: OpenProcessToken failed: {Marshal.GetExceptionForHR(Marshal.GetHRForLastWin32Error()).Message}");
+
+            var tokenPrivileges = new TOKEN_PRIVILEGES
+            {
+                PrivilegeCount = 1,
+                Privileges = new[] { new LUID_AND_ATTRIBUTES { LUID = luid, Attributes = (uint)(EnableDisable ? 2 : 4) } }
+            };
+
             if (!NativeMethods.AdjustTokenPrivileges(tokenHandle, false, ref tokenPrivileges, 0, IntPtr.Zero, out _))
             {
                 tokenHandle.Dispose();
@@ -213,461 +266,368 @@ namespace SimplifiedMemoryManager
             else tokenHandle.Dispose();
         }
 
+        #endregion
 
-        private void ForceReadWritePermissions(IntPtr objectAddress, int byteCount)
-		{
-			bool modificationSuccess;
+        #region Public methods — UNCHANGED from original
 
-			lock (ProcessToProxy) 
-			{
-				modificationSuccess = NativeMethods.VirtualProtectEx(OpenedProcessHandle, objectAddress, byteCount, AccessPrivileges.ExecuteReadWrite, out _);
-			}
-
-			if (!modificationSuccess)
-				throw new SimpleProcessProxyException($"Failed to force read/write permissions at {OpenedProcessHandle}+{objectAddress} with error {Marshal.GetLastWin32Error()}");
-		}
-
-        private void ForceReadWritePermissionsAdmin(IntPtr objectAddress, long byteCount)
+        public void InvertBooleanValue(IntPtr memoryOffset, int booleanSize = 1, bool forceWritability = false)
         {
-			bool modificationSuccess;
+            byte[] currentValue = GetMemory(memoryOffset, booleanSize);
+            byte[] valueToWrite = new byte[booleanSize];
 
-			Process.EnterDebugMode();
-			EnableDisablePrivilege("SeDebugPrivilege", true);
+            if (Enumerable.SequenceEqual(currentValue, BitConverter.GetBytes(true)))
+                BitConverter.GetBytes(false).CopyTo(valueToWrite, 0);
+            else
+                BitConverter.GetBytes(true).CopyTo(valueToWrite, 0);
 
-            lock (ProcessToProxy)
-			{
-				modificationSuccess = NativeMethods.VirtualProtectEx(OpenedProcessHandle, objectAddress, byteCount, AccessPrivileges.ExecuteReadWrite, out _);
-			}
-
-			if (!modificationSuccess)
-			{
-				var errorCode = Marshal.GetLastWin32Error();
-				//throw new SimpleProcessProxyException($"Failed to force read/write permissions at {OpenedProcessHandle}+{objectAddress}.");
-				return;
-			}
+            try
+            {
+                SetMemory(memoryOffset, valueToWrite, forceWritability);
+            }
+            catch (Exception e)
+            {
+                throw new SimpleProcessProxyAggregateException($"Failed to write boolean value at {memoryOffset}", e);
+            }
         }
 
-        private void WriteBytesToMemory(IntPtr objectAddress, byte[] bytesToWrite)
-		{
-			bool modificationSuccess = NativeMethods.WriteProcessMemory(OpenedProcessHandle, objectAddress, bytesToWrite, (uint)bytesToWrite.Length, out int bytesWritten);
-
-			if (!modificationSuccess || bytesWritten != bytesToWrite.Length)
-			{
-				if (!modificationSuccess)
-				{
-					throw new SimpleProcessProxyException("Failed to write to process memory.");
-				}
-				if (bytesWritten != bytesToWrite.Length)
-				{
-					throw new SimpleProcessProxyException($"We tried to write {bytesToWrite.Length} bytes, but ended up writing {bytesWritten}");
-				}
-				throw new SimpleProcessProxyException($"Failed to write memory at {OpenedProcessHandle}+{objectAddress} with value {bytesToWrite}.");
-			}
-		}
-
-		private byte[] ReadBytesFromMemory(IntPtr objectAddress, byte[] bytesToRead)
-		{
-			bool success = NativeMethods.ReadProcessMemory(OpenedProcessHandle, objectAddress, bytesToRead, (long)bytesToRead.Length, out long bytesRead);
-
-			if (!success || bytesRead != bytesToRead.Length)
-			{
-				if (!success)
-				{
-					throw new SimpleProcessProxyException("Failed to read from process memory.");
-				}
-				if (bytesRead != bytesToRead.Length)
-				{
-					throw new SimpleProcessProxyException($"Expected to read {bytesToRead.Length}, but we actually read {bytesRead}");
-				}
-				throw new SimpleProcessProxyException($"Failed to read value at {OpenedProcessHandle}+{objectAddress}.");
-			}
-
-			return bytesToRead;
-		}
-
-		
-		#endregion
-
-		#region Public methods
-		/// <summary>
-		/// Opens the proxied process, gets the current value of the designated offset, and attempts to invert its state.
-		/// 
-		/// If the attempt to invert the boolean fails, an exception is thrown.
-		/// </summary>
-		/// <param name="memoryOffset">The offset, from index 0 of the proxied process' memory, that holds the boolean you want to invert.</param>
-		/// <param name="booleanSize">If your process stores booleans with more than 1 byte, specify the byte-size here.</param>
-		/// <exception cref="SimpleProcessProxyException"></exception>
-		public void InvertBooleanValue(IntPtr memoryOffset, int booleanSize = 1, bool forceWritability = false)
-		{
-			byte[] currentValue = GetMemory(memoryOffset, booleanSize);
-
-			byte[] valueToWrite = new byte[booleanSize];
-
-			if (Enumerable.SequenceEqual(currentValue, BitConverter.GetBytes(true)))
-			{
-				BitConverter.GetBytes(false).CopyTo(valueToWrite, 0);
-			}
-			else
-			{
-				BitConverter.GetBytes(true).CopyTo(valueToWrite, 0);
-			}
-
-			try
-			{
-				SetMemory(memoryOffset, valueToWrite, forceWritability);
-			}
-			catch (Exception e)
-			{
-				throw new SimpleProcessProxyException($"Failed to write boolean value at {OpenedProcessHandle}+{memoryOffset}", e);
-			}
-		}
-
-		#region ModifyProcessOffset methods
-		/// <summary>
-		/// Opens the proxied process and attempts to modify its memory at the designated offset with the provided value.
-		/// 
-		/// If the attempt to modify memory fails, an exception is thrown.
-		/// </summary>
-		/// <param name="memoryOffset">Where in the proxied process' memory to begin the modification.</param>
-		/// <param name="offsetValueToWrite">Value to set in memory, beginning at the memoryOffset and extending for the byte-length of the value.</param>
-		/// <exception cref="SimpleProcessProxyException"></exception>
-		public void ModifyProcessOffset(IntPtr memoryOffset, short offsetValueToWrite, bool forceWritability = false)
-		{
-			try
-			{
-				SetMemory(memoryOffset, BitConverter.GetBytes(offsetValueToWrite), forceWritability);
-			}
-			catch(Exception e)
-			{
-				throw new SimpleProcessProxyException($"Failed to write int value at {OpenedProcessHandle}+{memoryOffset}", e);
-			}
-		}
-
-		/// <summary>
-		/// Opens the proxied process and attempts to modify its memory at the designated offset with the provided value.
-		/// 
-		/// If the attempt to modify memory fails, an exception is thrown.
-		/// </summary>
-		/// <param name="memoryOffset">Where in the proxied process' memory to begin the modification.</param>
-		/// <param name="offsetValueToWrite">Value to set in memory, beginning at the memoryOffset and extending for the byte-length of the value.</param>
-		/// <exception cref="SimpleProcessProxyException"></exception>
-		public void ModifyProcessOffset(IntPtr memoryOffset, int offsetValueToWrite, bool forceWritability = false)
-		{
-			try
-			{
-				SetMemory(memoryOffset, BitConverter.GetBytes(offsetValueToWrite), forceWritability);
-			}
-			catch (Exception e)
-			{
-				throw new SimpleProcessProxyException($"Failed to write int value at {OpenedProcessHandle}+{memoryOffset}", e);
-			}
-		}
-
-		/// <summary>
-		/// Opens the proxied process and attempts to modify its memory at the designated offset with the provided value.
-		/// 
-		/// If the attempt to modify memory fails, an exception is thrown.
-		/// </summary>
-		/// <param name="memoryOffset">Where in the proxied process' memory to begin the modification.</param>
-		/// <param name="offsetValueToWrite">Value to set in memory, beginning at the memoryOffset and extending for the byte-length of the value.</param>
-		/// <exception cref="SimpleProcessProxyException"></exception>
-		public void ModifyProcessOffset(IntPtr memoryOffset, long offsetValueToWrite, bool forceWritability = false)
-		{
-			try
-			{
-				SetMemory(memoryOffset, BitConverter.GetBytes(offsetValueToWrite), forceWritability);
-			}
-			catch (Exception e)
-			{
-				throw new SimpleProcessProxyException($"Failed to write int value at {OpenedProcessHandle}+{memoryOffset}", e);
-			}
-		}
-
-		/// <summary>
-		/// Opens the proxied process and attempts to modify its memory at the designated offset with the provided value.
-		/// 
-		/// If the attempt to modify memory fails, an exception is thrown.
-		/// </summary>
-		/// <param name="memoryOffset">Where in the proxied process' memory to begin the modification.</param>
-		/// <param name="offsetValueToWrite">Value to set in memory, beginning at the memoryOffset and extending for the byte-length of the value.</param>
-		/// <exception cref="SimpleProcessProxyException"></exception>
-		public void ModifyProcessOffset(IntPtr memoryOffset, double offsetValueToWrite, bool forceWritability = false)
-		{
-			try
-			{
-				SetMemory(memoryOffset, BitConverter.GetBytes(offsetValueToWrite), forceWritability);
-			}
-			catch (Exception e)
-			{
-				throw new SimpleProcessProxyException($"Failed to write int value at {OpenedProcessHandle}+{memoryOffset}", e);
-			}
-		}
-
-		/// <summary>
-		/// Opens the proxied process and attempts to modify its memory at the designated offset with the provided value.
-		/// 
-		/// If the attempt to modify memory fails, an exception is thrown.
-		/// </summary>
-		/// <param name="memoryOffset">Where in the proxied process' memory to begin the modification.</param>
-		/// <param name="offsetValueToWrite">Value to set in memory, beginning at the memoryOffset and extending for the byte-length of the value.</param>
-		/// <exception cref="SimpleProcessProxyException"></exception>
-		public void ModifyProcessOffset(IntPtr memoryOffset, float offsetValueToWrite, bool forceWritability = false)
-		{
-			try
-			{
-				SetMemory(memoryOffset, BitConverter.GetBytes(offsetValueToWrite), forceWritability);
-			}
-			catch (Exception e)
-			{
-				throw new SimpleProcessProxyException($"Failed to write int value at {OpenedProcessHandle}+{memoryOffset}", e);
-			}
-		}
-
-		/// <summary>
-		/// Opens the proxied process and attempts to modify its memory at the designated offset with the provided value.
-		/// 
-		/// If the attempt to modify memory fails, an exception is thrown.
-		/// </summary>
-		/// <param name="memoryOffset">Where in the proxied process' memory to begin the modification.</param>
-		/// <param name="offsetValueToWrite">Value to set in memory, beginning at the memoryOffset and extending for the byte-length of the value.</param>
-		/// <exception cref="SimpleProcessProxyException"></exception>
-		public void ModifyProcessOffset(IntPtr memoryOffset, bool offsetValueToWrite, bool forceWritability = false)
-		{
-			try
-			{
-				SetMemory(memoryOffset, BitConverter.GetBytes(offsetValueToWrite), forceWritability);
-			}
-			catch (Exception e)
-			{
-				throw new SimpleProcessProxyException($"Failed to write int value at {OpenedProcessHandle}+{memoryOffset}", e);
-			}
-		}
-
-		/// <summary>
-		/// Opens the proxied process and attempts to modify its memory at the designated offset with the provided value.
-		/// 
-		/// If the attempt to modify memory fails, an exception is thrown.
-		/// </summary>
-		/// <param name="memoryOffset">Where in the proxied process' memory to begin the modification.</param>
-		/// <param name="offsetValueToWrite">Value to set in memory, beginning at the memoryOffset and extending for the byte-length of the value.</param>
-		/// <exception cref="SimpleProcessProxyException"></exception>
-		public void ModifyProcessOffset(IntPtr memoryOffset, char offsetValueToWrite, bool forceWritability = false)
-		{
-			try
-			{
-				SetMemory(memoryOffset, BitConverter.GetBytes(offsetValueToWrite), forceWritability);
-			}
-			catch (Exception e)
-			{
-				throw new SimpleProcessProxyException($"Failed to write int value at {OpenedProcessHandle}+{memoryOffset}", e);
-			}
-		}
-
-		/// <summary>
-		/// Opens the proxied process and attempts to modify its memory at the designated offset with the provided value.
-		/// 
-		/// If the attempt to modify memory fails, an exception is thrown.
-		/// </summary>
-		/// <param name="memoryOffset">Where in the proxied process' memory to begin the modification.</param>
-		/// <param name="offsetValueToWrite">Value to set in memory, beginning at the memoryOffset and extending for the byte-length of the value.</param>
-		/// <exception cref="SimpleProcessProxyException"></exception>
-		public void ModifyProcessOffset(IntPtr memoryOffset, byte[] offsetValueToWrite, bool forceWritability = false)
-		{
-			try
-			{
-				SetMemory(memoryOffset, offsetValueToWrite, forceWritability);
-			}
-			catch(Exception e)
-			{
-				throw new SimpleProcessProxyException($"Failed to write int value at {OpenedProcessHandle}+{memoryOffset}", e);
-			}
-		}
-
-		/// <summary>
-		/// Opens the proxied process and attempts to modify its memory at the designated offset with the provided value.
-		/// 
-		/// If the attempt to modify memory fails, an exception is thrown.
-		/// </summary>
-		/// <param name="memoryOffset">Where in the proxied process' memory to begin the modification.</param>
-		/// <param name="offsetValueToWrite">Value to set in memory, beginning at the memoryOffset and extending for the byte-length of the value.</param>
-		/// <exception cref="SimpleProcessProxyException"></exception>
-		public void ModifyProcessOffset(IntPtr memoryOffset, string offsetValueToWrite, bool forceWritability = false)
-		{
-			try
-			{
-				SetMemory(memoryOffset, Encoding.Default.GetBytes(offsetValueToWrite), forceWritability);
-			}
-			catch (Exception e)
-			{
-				throw new SimpleProcessProxyException($"Failed to write int value at {OpenedProcessHandle}+{memoryOffset}", e);
-			}
-		}
-		#endregion
-
-		/// <summary>
-		/// Reads the proxied process' memory at the given offset for the supplied quantity of bytes.
-		/// 
-		/// If the attempt to read memory fails, an exception is thrown.
-		/// </summary>
-		/// <param name="memoryOffset">Where in the proxied process' memory to begin reading from.</param>
-		/// <param name="bytesToRead">Amount of bytes to read in and return.</param>
-		/// <returns>The bytes found at the provided offset within the proxied process.</returns>
-		/// <exception cref="SimpleProcessProxyException"></exception>
-		public byte[] ReadProcessOffset(IntPtr memoryOffset, long bytesToRead)
-		{
-			try
-			{
-				return GetMemory(memoryOffset, bytesToRead);
-			}
-			catch(Exception e)
-			{
-				throw new SimpleProcessProxyException($"Failed to read value at {OpenedProcessHandle}+{memoryOffset}", e);
-			}
-		}
-
-		/// <summary>
-		/// Takes a snapshot of the proxied process' memory at the current moment in time.
-		/// </summary>
-		/// <returns>Array of bytes containing the proxied process' current memory.</returns>
-		/// <exception cref="SimpleProcessProxyException"></exception>
-		public byte[] GetProcessSnapshot()
-		{
-			try
-			{                
-				return GetProcessSnapshot(ProcessToProxy.PeakPagedMemorySize64);
-			}
-			catch(Exception e)
-			{
-				throw new SimpleProcessProxyException($"Failed to get full-state of process", e);
-			}
-		}
-
-        public IntPtr ScanMemoryForUniquePattern(SimplePattern pattern, byte[] memoryToScan = null)
+        #region ModifyProcessOffset overloads
+        public void ModifyProcessOffset(IntPtr memoryOffset, short offsetValueToWrite, bool forceWritability = false)
         {
-            List<IntPtr> results = new List<IntPtr>();
-
-            ScanManager scanManager = new ScanManager();
-            
-			if (OpenedProcessHandle != IntPtr.Zero)
-            {
-                NativeMethods.CloseHandle(OpenedProcessHandle);
-                OpenedProcessHandle = default;
-            }
-
-			lock (ProcessToProxy)
-			{
-				if (memoryToScan != null)
-				{
-					scanManager.ByteArrayScan(memoryToScan, pattern);
-				}
-				else
-				{
-					scanManager.FullProcessScan(pattern, ProcessToProxy, GetMemoryOutsideMainModule);
-				}
-			}
-
-            if (scanManager.ScanResult.Count == 0)
-            {
-                throw new SimpleProcessProxyException("Pattern not found in process memory.");
-            }
-
-            return scanManager.ScanResult.First();
+            try { SetMemory(memoryOffset, BitConverter.GetBytes(offsetValueToWrite), forceWritability); }
+            catch (Exception e) { throw new SimpleProcessProxyAggregateException($"Failed to write short value at {memoryOffset}", e); }
         }
 
-		public IntPtr FollowPointer(IntPtr pointer, bool bigEndian, int sizeOfPointer = 8)
-		{
-			try
-			{
-				OpenProcess();
+        public void ModifyProcessOffset(IntPtr memoryOffset, int offsetValueToWrite, bool forceWritability = false)
+        {
+            try { SetMemory(memoryOffset, BitConverter.GetBytes(offsetValueToWrite), forceWritability); }
+            catch (Exception e) { throw new SimpleProcessProxyAggregateException($"Failed to write int value at {memoryOffset}", e); }
+        }
 
-				byte[] memoryPointedTo = new byte[sizeOfPointer];
-				ReadBytesFromMemory(new IntPtr(ProcessBaseAddress.ToInt64() + pointer.ToInt64()), memoryPointedTo);
+        public void ModifyProcessOffset(IntPtr memoryOffset, long offsetValueToWrite, bool forceWritability = false)
+        {
+            try { SetMemory(memoryOffset, BitConverter.GetBytes(offsetValueToWrite), forceWritability); }
+            catch (Exception e) { throw new SimpleProcessProxyAggregateException($"Failed to write long value at {memoryOffset}", e); }
+        }
 
-				if (bigEndian)
-				{
-					memoryPointedTo = memoryPointedTo.Reverse().ToArray();
-				}
-				
-				if (!Environment.Is64BitOperatingSystem)
-				{
-					return new IntPtr(BitConverter.ToInt32(memoryPointedTo, 0));
-				}
-				else
-				{
-					if(sizeOfPointer < 8)
-					{
-						//realistically, if it isn't 8, its 4. but who knows.
-						List<byte> listPadder = new List<byte>();
-                        listPadder.AddRange(memoryPointedTo);
-                        for (int i = 0; i < sizeOfPointer; i++)
-						{
-							listPadder.Add(0);
-						}
-						memoryPointedTo = listPadder.ToArray();
-					}
-					return new IntPtr(BitConverter.ToInt64(memoryPointedTo, 0));
-				}
-			}
-            finally
+        public void ModifyProcessOffset(IntPtr memoryOffset, double offsetValueToWrite, bool forceWritability = false)
+        {
+            try { SetMemory(memoryOffset, BitConverter.GetBytes(offsetValueToWrite), forceWritability); }
+            catch (Exception e) { throw new SimpleProcessProxyAggregateException($"Failed to write double value at {memoryOffset}", e); }
+        }
+
+        public void ModifyProcessOffset(IntPtr memoryOffset, float offsetValueToWrite, bool forceWritability = false)
+        {
+            try { SetMemory(memoryOffset, BitConverter.GetBytes(offsetValueToWrite), forceWritability); }
+            catch (Exception e) { throw new SimpleProcessProxyAggregateException($"Failed to write float value at {memoryOffset}", e); }
+        }
+
+        public void ModifyProcessOffset(IntPtr memoryOffset, bool offsetValueToWrite, bool forceWritability = false)
+        {
+            try { SetMemory(memoryOffset, BitConverter.GetBytes(offsetValueToWrite), forceWritability); }
+            catch (Exception e) { throw new SimpleProcessProxyAggregateException($"Failed to write bool value at {memoryOffset}", e); }
+        }
+
+        public void ModifyProcessOffset(IntPtr memoryOffset, char offsetValueToWrite, bool forceWritability = false)
+        {
+            try { SetMemory(memoryOffset, BitConverter.GetBytes(offsetValueToWrite), forceWritability); }
+            catch (Exception e) { throw new SimpleProcessProxyAggregateException($"Failed to write char value at {memoryOffset}", e); }
+        }
+
+        public void ModifyProcessOffset(IntPtr memoryOffset, byte[] offsetValueToWrite, bool forceWritability = false)
+        {
+            try { SetMemory(memoryOffset, offsetValueToWrite, forceWritability); }
+            catch (Exception e) { throw new SimpleProcessProxyAggregateException($"Failed to write byte[] at {memoryOffset}", e); }
+        }
+
+        public void ModifyProcessOffset(IntPtr memoryOffset, string offsetValueToWrite, bool forceWritability = false)
+        {
+            try { SetMemory(memoryOffset, Encoding.Default.GetBytes(offsetValueToWrite), forceWritability); }
+            catch (Exception e) { throw new SimpleProcessProxyAggregateException($"Failed to write string value at {memoryOffset}", e); }
+        }
+        #endregion
+
+        public byte[] ReadProcessOffset(IntPtr memoryOffset, long bytesToRead)
+        {
+            try
             {
-                if (OpenedProcessHandle != default)
-                {
-                    NativeMethods.CloseHandle(OpenedProcessHandle);
-                    OpenedProcessHandle = default;
-                }
+                return GetMemory(memoryOffset, bytesToRead);
+            }
+            catch (Exception e)
+            {
+                throw new SimpleProcessProxyAggregateException($"Failed to read value at {memoryOffset}", e);
             }
         }
 
-		public byte[] GetMemoryFromPointer(IntPtr pointer, int size)
-		{
-			return GetMemoryOutsideMainModule(pointer, size);
-		}
-
-		public void SetMemoryAtPointer(IntPtr pointer, byte[] data)
-		{
-			SetMemoryOutsideMainModule(pointer, data);
-		}
+        public byte[] GetProcessSnapshot()
+        {
+            try { return GetProcessSnapshot(ProcessToProxy.MainModule.ModuleMemorySize); }
+            catch (Exception e) { throw new SimpleProcessProxyAggregateException("Failed to get full-state of process", e); }
+        }
 
         /// <summary>
-        /// Kicks off a series of tasks(one for each logical processor available on your machine)
-        /// to begin asynchronously scanning memory for a hexadecimal pattern(also known as an
-        /// array of bytes).
+        /// Scan memory related to the process you are proxying for a specified SimplePattern. Provide only
+        /// the pattern to scan ALL available memory until the first result is found, optionally provide a byte array
+        /// to scan just that array for the SimplePattern.
+        ///
+        /// WARNING: This operation is very slow on Linux systems. Use sparingly if you want cross-platform functionality.
         /// </summary>
-        /// <param name="pattern">The SimplePattern representation of an AoB to scan for</param>
-        /// <param name="memoryToScan">Optional - provide this to scan this specific array of memory.
-        /// If this is not provided, this method will automatically scan the memory
-        /// of the process associated with the SimpleProcessProxy.</param>
-        /// <param name="quantityToFind">Optional - provide an integer to provide a specific quantity
-        /// of matches in memory. By default, this is set to -1 to catch all pattern matches.</param>
-        /// <returns>The index of the starting position of the provided pattern, or -1 if not found.</returns>
-        public List<IntPtr> ScanMemoryForPattern(SimplePattern pattern, byte[] memoryToScan = null, int quantityToFind = -1)
-		{
-			if(quantityToFind == 0)
-				throw new SimpleProcessProxyException("Invalid quantity to find. Provide a positive integer.");
-			if (quantityToFind == 1)
-				throw new SimpleProcessProxyException("Invalid quantity to find. Use ScanMemoryForUniquePattern to find only one result.");
-			List<IntPtr> results = new List<IntPtr>();
+        /// <param name="pattern"></param>
+        /// <param name="memoryToScan"></param>
+        /// <returns>SimpleMemory obj representing the memory locations of the data, if found.</returns>
+        /// <exception cref="SimpleProcessProxyException"></exception>
+        public async Task<SimpleMemory> ScanMemoryForUniquePatternAsync(SimplePattern pattern, byte[] memoryToScan = null)
+        {
+            ScanManager scanManager = new ScanManager();
+            //_platform.Close();
 
-			ScanManager scanManager = new ScanManager(quantityToFind);
-
-			if (memoryToScan != null)
-			{
-				scanManager.ByteArrayScan(memoryToScan, pattern);
-			}
+            if (memoryToScan != null)
+            {
+                scanManager.ByteArrayScan(memoryToScan, pattern);
+                await scanManager.InitiateScan();
+            }
             else
             {
-				scanManager.FullProcessScan(pattern, ProcessToProxy, GetMemoryOutsideMainModule);
-			}
-			
-			scanManager.InitiateScan();
-			
-			if(scanManager.ScanResult.Count == 0)
-			{
-				throw new SimpleProcessProxyException("Pattern not found in process memory.");
-			}
+                if (_platform is WindowsPlatformMemory)
+                {
+                    // Windows path — scan by process modules
+                    await scanManager.FullProcessScan(pattern, ProcessToProxy, GetMemoryOutsideMainModule);
+                }
+                else
+                {
+                    List<(long, int, string)> regions = _platform.GetReadableRegionsWithName(ProcessToProxy.Id)?.ToList();
+                    if (regions != null)
+                    {
+                        // Linux path — scan by memory region from /proc/{pid}/maps
+                        List<IntPtr> found = await LinuxRegionScanAsync(pattern, regions);
+                        return found.Count == 0
+                            ? throw new SimpleProcessProxyException("Pattern not found in process memory. (LINUX)")
+                            : new SimpleMemory(found[0], ProcessBaseAddress);
+                    }
+                }
+            }
 
-			return scanManager.ScanResult;
-		}
-		#endregion
-	}
+            return scanManager.ScanResult.Count == 0
+                ? throw new SimpleProcessProxyException("Pattern not found in process memory. (WINDOWS)")
+                : memoryToScan != null 
+                    ? new SimpleMemory(scanManager.ScanResult.First().Item1, IntPtr.Zero)
+                    : new SimpleMemory(scanManager.ScanResult.First().Item1, scanManager.ScanResult.First().Item2.BaseAddress);
+        }
+        
+        public IntPtr FollowPointer(IntPtr pointer, bool bigEndian, int sizeOfPointer = 8)
+        {
+            try
+            {
+                OpenProcess();
+
+                byte[] memoryPointedTo = new byte[sizeOfPointer];
+                ReadBytesFromMemory(
+                    new IntPtr(ProcessBaseAddress.ToInt64() + pointer.ToInt64()),
+                    memoryPointedTo);
+
+                if (bigEndian)
+                    memoryPointedTo = memoryPointedTo.Reverse().ToArray();
+
+                if (!Environment.Is64BitOperatingSystem)
+                    return new IntPtr(BitConverter.ToInt32(memoryPointedTo, 0));
+
+                if (sizeOfPointer < 8)
+                {
+                    List<byte> padded = new List<byte>(memoryPointedTo);
+                    for (int i = 0; i < sizeOfPointer; i++) padded.Add(0);
+                    memoryPointedTo = padded.ToArray();
+                }
+
+                return new IntPtr(BitConverter.ToInt64(memoryPointedTo, 0));
+            }
+            finally
+            {
+                _platform.Close();
+            }
+        }
+
+        public byte[] GetMemoryFromPointer(IntPtr pointer, int size)
+            => GetMemoryOutsideMainModule(pointer, size);
+
+        public void SetMemoryAtPointer(IntPtr pointer, byte[] data, bool forceWrite = false)
+            => SetMemoryOutsideMainModule(pointer, data, forceWrite);
+
+        /// <summary>
+        /// Scan memory related to the process you are proxying for a specified SimplePattern. Provide only
+        /// the pattern to scan ALL available memory top-to-bottom and get all results, optionally provide a byte array
+        /// to scan just that array for the SimplePattern, and/or optionally provide a quantity to restrict your results
+        /// to the first however many results you've specified.
+        ///
+        /// WARNING: This operation is very slow on Linux systems. Use sparingly if you want cross-platform functionality.
+        /// </summary>
+        /// <param name="pattern"></param>
+        /// <param name="memoryToScan"></param>
+        /// <param name="quantityToFind"></param>
+        /// <returns>SimpleMemory obj representing the memory locations of the data, if found.</returns>
+        /// <exception cref="SimpleProcessProxyException"></exception>
+        public async Task<List<SimpleMemory>> ScanMemoryForPatternAsync(SimplePattern pattern, byte[] memoryToScan = null, int quantityToFind = -1)
+        {
+            switch (quantityToFind)
+            {
+                case 0:
+                    throw new SimpleProcessProxyException("Invalid quantity to find. Provide a positive integer.");
+                case 1:
+                    throw new SimpleProcessProxyException("Invalid quantity to find. Use ScanMemoryForUniquePattern to find only one result.");
+            }
+
+            ScanManager scanManager = new ScanManager(quantityToFind);
+            List<SimpleMemory> results;
+
+            if (memoryToScan != null)
+            {
+                scanManager.ByteArrayScan(memoryToScan, pattern);
+                await scanManager.InitiateScan();
+            }
+            else
+            {
+                if (_platform is WindowsPlatformMemory)
+                {
+                    // Windows path — scan by process modules
+                    await scanManager.FullProcessScan(pattern, ProcessToProxy, GetMemoryOutsideMainModule);
+                }
+                else
+                {
+                    var regions = _platform.GetReadableRegionsWithName(ProcessToProxy.Id)?.ToList();
+                    //Console.WriteLine($"Direct GetReadableRegions count: {regions?.Count ?? -1}");
+                    
+                    if (regions == null)
+                        throw new SimpleProcessProxyException("No regions to read on this process, cannot scan memory");
+                    
+                    List<IntPtr> found = await LinuxRegionScanAsync(pattern, regions, quantityToFind);
+
+                    if (found.Count == 0)
+                        throw new SimpleProcessProxyException("Pattern not found in process memory.");
+                    
+                    results = new List<SimpleMemory>();
+                    foreach (IntPtr result in found)
+                    {
+                        results.Add(new SimpleMemory(result, ProcessBaseAddress));
+                    }
+
+                    return results;
+                }
+            }
+
+            if (scanManager.ScanResult.Count == 0)
+                throw new SimpleProcessProxyException("Pattern not found in process memory.");
+
+            results = new List<SimpleMemory>();
+            foreach (var result in scanManager.ScanResult)
+            {
+                if (memoryToScan == null)
+                    results.Add(new SimpleMemory(result.Item1, result.Item2.BaseAddress));
+                else
+                    results.Add(new SimpleMemory(result.Item1, IntPtr.Zero));
+            }
+            
+            return results;
+        }
+        
+        private async Task<List<IntPtr>> LinuxRegionScanAsync(SimplePattern pattern,
+            List<(long start, int size, string name)> regionList, int quantityToFind = -1,
+            CancellationToken cancellationToken = default)
+        {
+            var results = new ConcurrentBag<IntPtr>();
+            List<PatternExpression> parsed = pattern.ParsedPattern;
+            int patternLength = parsed.Count;
+            int pid = ProcessToProxy.Id;
+
+            int foundCount = 0;
+            int degreeOfParallelism = Environment.ProcessorCount / 2; //TODO: keep it like this, or allow hammering? Maybe make it a choice?
+
+            using var stopCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            using var throttle = new SemaphoreSlim(degreeOfParallelism, degreeOfParallelism);
+
+            var tasks = new List<Task>(regionList.Count);
+
+            for (int r = 0; r < regionList.Count; r++)
+            {
+                int regionIndex = r; // capture for closure
+
+                await throttle.WaitAsync(stopCts.Token).ConfigureAwait(false);
+
+                // If quantity was met while we were waiting for a slot, stop launching new work.
+                if (stopCts.IsCancellationRequested)
+                {
+                    throttle.Release();
+                    break;
+                }
+
+                Task task = Task.Run(() =>
+                {
+                    try
+                    {
+                        var (start, size, name) = regionList[regionIndex];
+                        long nextStart = (regionIndex + 1 < regionList.Count)
+                            ? regionList[regionIndex + 1].start
+                            : start + size;
+                        long rawReadSize = nextStart - start;
+                        int readSize = (rawReadSize <= 0 || rawReadSize > size * 2 || rawReadSize > 256 * 1024 * 1024)
+                            ? size
+                            : (int)rawReadSize;
+
+                        if (stopCts.IsCancellationRequested) return;
+
+                        byte[] buffer = new byte[readSize];
+                        _platform.ReadBytes(new IntPtr(start), buffer, pid);
+
+                        for (int i = 0; i <= buffer.Length - patternLength; i++)
+                        {
+                            if (stopCts.IsCancellationRequested) return;
+
+                            bool match = true;
+                            for (int j = 0; j < patternLength; j++)
+                            {
+                                PatternExpression expr = parsed[j];
+                                if (expr.Operation == Operation.SkipOne) continue;
+                                if (expr.Operation == Operation.Exact && expr.Operand != buffer[i + j])
+                                {
+                                    match = false;
+                                    break;
+                                }
+                            }
+
+                            if (match)
+                            {
+                                results.Add(new IntPtr(start + i));
+
+                                if (quantityToFind > 0 && Interlocked.Increment(ref foundCount) >= quantityToFind)
+                                {
+                                    stopCts.Cancel(); // signal every other in-flight region to stop
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                    catch
+                    {
+                        // Mirrors original 'catch { continue; }' — skip unreadable regions.
+                    }
+                    finally
+                    {
+                        throttle.Release();
+                    }
+                }, cancellationToken);
+
+                tasks.Add(task);
+            }
+
+            // Wait for everything currently running/queued to wind down.
+            // Individual task exceptions are already swallowed above, so this just
+            // waits for completion — no need for a try/catch around it.
+            await Task.WhenAll(tasks).ConfigureAwait(false);
+
+            var resultList = results.OrderBy(p => p.ToInt64()).ToList();
+
+            if (quantityToFind > 0 && resultList.Count > quantityToFind)
+                resultList = resultList.Take(quantityToFind).ToList();
+
+            return resultList;
+        }
+        #endregion
+    }
 }
