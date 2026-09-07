@@ -43,14 +43,15 @@ namespace SimplifiedMemoryManager
 
         public static Process ProcessToProxy { get; set; }
         private static string ProcessName { get; set; }
-        private static IntPtr ProcessBaseAddress { get; set; }
+        private static IntPtr ProcessBaseAddress { get; 
+set; }
 
         // ── Cross-platform memory backend ──────────────────────────────────────
         // Chosen once at construction time based on the OS we're running on.
         // All private methods below call _platform instead of NativeMethods directly.
         private readonly IPlatformMemory _platform;
 
-        public SimpleProcessProxy(Process process)
+        public SimpleProcessProxy(Process process, string peBaseName = null)
         {
             ProcessToProxy = process ?? throw new SimpleProcessProxyException("You must provide a process to modify.");
             ProcessBaseAddress = process.MainModule.BaseAddress;
@@ -62,7 +63,7 @@ namespace SimplifiedMemoryManager
             else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
             {
                 _platform = new LinuxPlatformMemory();
-                IntPtr peBase = ((LinuxPlatformMemory)_platform).FindPeBaseAddress(process.Id, process.ProcessName);
+                IntPtr peBase = ((LinuxPlatformMemory)_platform).FindPeBaseAddress(process.Id, peBaseName ?? process.ProcessName);
                 
                 if (peBase != IntPtr.Zero)
                 {
@@ -424,7 +425,7 @@ namespace SimplifiedMemoryManager
                     new IntPtr(ProcessBaseAddress.ToInt64() + pointer.ToInt64()),
                     memoryPointedTo);
 
-                if (bigEndian)
+                if (!bigEndian)
                     memoryPointedTo = memoryPointedTo.Reverse().ToArray();
 
                 if (!Environment.Is64BitOperatingSystem)
