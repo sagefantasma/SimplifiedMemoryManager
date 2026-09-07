@@ -15,7 +15,7 @@
     <PackageLicenseFile>LICENSE</PackageLicenseFile>
     <PackageId>SimplifiedMemoryManager</PackageId>
     <FileVersion>$(AssemblyVersion)</FileVersion>
-    <AssemblyVersion>2.0.0</AssemblyVersion>
+    <AssemblyVersion>2.0.1</AssemblyVersion>
     <Version>$(AssemblyVersion)</Version>
     <LangVersion>9</LangVersion>
   </PropertyGroup>
